@@ -10,7 +10,7 @@ Thanks to this, we can save on resources by removing the IPC and GC overheads.
 
 # Features
 
-The currently supported featues are
+The currently supported features are
 
 - [ ] Named tunnel (Zero Trust Network Access)
 - [x] Quick tunnel (TryCloudflare)
