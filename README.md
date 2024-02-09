@@ -4,7 +4,7 @@ A port of [cloudflared](https://github.com/cloudflare/cloudflared) (Cloudflare T
 
 # Purpose
 
-LibCFD intends to be lightweight and programmable replacement for the cloudflared and its command line wrappers.
+LibCFD intends to be lightweight and programmable replacement for cloudflared and its command line wrappers.
 The main advantage of LibCFD is that we don't have to spawn a whole new process (that uses a garbage collected runtime) to connect to Cloudflare.
 Thanks to this, we can save on resources by removing the IPC and GC overheads.
 
