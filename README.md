@@ -31,6 +31,7 @@ Aside form those already listed above, these two are some to dos I am lookning f
 
 - Fix async (some futures are !Send due to capnp, there may be a need to modify capnp)
 - Decouple Tokio
+- Clean up dependencies
 
 # Performance
 
