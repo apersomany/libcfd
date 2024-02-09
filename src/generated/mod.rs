@@ -1,7 +1,7 @@
 use rustls::Certificate;
 
 pub fn cloudflare_ca() -> Certificate {
-    Certificate(include_bytes!("cloudflare_ca.der").into())
+    Certificate(include_bytes!("cloudflare_ca.der").to_vec())
 }
 
 #[allow(unused)]
