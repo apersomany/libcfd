@@ -34,7 +34,7 @@ Aside form those already listed above, these two are some to dos I am lookning f
 
 # Performance
 
-Work in progress. At least goes up to 500mb/s (my internet speed).
+Work in progress. Seems to be able to hit 1gbps at least.
 
 # Examples
 
