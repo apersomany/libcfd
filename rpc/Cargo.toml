@@ -1,0 +1,12 @@
+[package]
+name = "libcfd-rpc"
+version = "0.2.0"
+edition = "2021"
+
+[build-dependencies]
+capnpc = "0.19"
+
+[dependencies]
+capnp = "0.19"
+capnp-futures = "0.19"
+capnp-rpc = "0.19"
