@@ -227,7 +227,7 @@ pub struct ConnectRequest {
     pub request_type: ConnectionType,
     pub metadata: HashMap<String, String>,
     send_stream: QuinnSendStream,
-    recv_stream: QuinnRecvStream,
+    pub recv_stream: QuinnRecvStream,
 }
 
 impl ConnectRequest {
