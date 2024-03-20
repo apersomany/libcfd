@@ -2,6 +2,9 @@
 
 A port of [cloudflared](https://github.com/cloudflare/cloudflared) (Cloudflare Tunnel Client) to Rust.
 
+# Note
+
+The current version is merely a proof of concept, and I am currently in the process of rewriting the whole crate with documentation, and a much more reasonable interface based on http-rs. My exams end on May 16, so I'll try to get it done by the end of may. :)
 # Purpose
 
 LibCFD intends to be lightweight and programmable replacement for cloudflared and its command line wrappers.
