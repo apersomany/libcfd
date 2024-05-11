@@ -86,13 +86,17 @@ impl Connection {
         for dst_addr in lookup_host(dst_addr).await? {
             let mut root_cert_store = RootCertStore::empty();
             root_cert_store.add(&cloudflare_ca())?;
+            let mut tls_config = RustlsClientConfig::builder()
+                .with_safe_default_cipher_suites()
+                .with_safe_default_kx_groups()
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .expect("TLS client config with protocol versions")
+                .with_root_certificates(root_cert_store)
+                .with_no_client_auth();
+            tls_config.enable_early_data = true;
+            tls_config.alpn_protocols = vec![b"argotunnel".into()];
             match endpoint.connect_with(
-                QuinnClientConfig::new(Arc::new(
-                    RustlsClientConfig::builder()
-                        .with_safe_defaults()
-                        .with_root_certificates(root_cert_store)
-                        .with_no_client_auth(),
-                )),
+                QuinnClientConfig::new(Arc::new(tls_config)),
                 dst_addr,
                 "quic.cftunnel.com",
             ) {
