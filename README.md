@@ -1,7 +1,3 @@
-# Archive Notice
-
-I currently don't have the will to continue working on this project. I am a bit of a perfectionist, and too many things bother me every time I restart work on the project. Many structs in the capnp-rpc crate are `!Send`, and the solutions around making futures `Send` while using `!Send` types are very inelegant in my opinion. Aside from that, trying to design an interface that wraps around both hyper and quinn was also not a good experience. So I don't think I will be working on this project for a while.
-
 # LibCFD
 
 A port of [cloudflared](https://github.com/cloudflare/cloudflared) (Cloudflare Tunnel Client) to Rust.
