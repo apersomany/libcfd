@@ -5,11 +5,15 @@ pub fn cloudflare_ca() -> Certificate {
 }
 
 #[allow(unused)]
-mod quic_metadata_protocol_capnp;
+mod quic_metadata_protocol_capnp {
+    include!(concat!(env!("OUT_DIR"), "/quic_metadata_protocol_capnp.rs"));
+}
 
 pub use quic_metadata_protocol_capnp::*;
 
 #[allow(unused)]
-mod tunnelrpc_capnp;
+mod tunnelrpc_capnp {
+    include!(concat!(env!("OUT_DIR"), "/tunnelrpc_capnp.rs"));
+}
 
 pub use tunnelrpc_capnp::*;
