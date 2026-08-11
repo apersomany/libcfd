@@ -75,6 +75,18 @@
               LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
               BINDGEN_EXTRA_CLANG_ARGS = "-I${pkgs.glibc.dev}/include";
             };
+
+            shellHook = ''
+              # boring-sys builds BoringSSL with cmake, which breaks under the
+              # gcc wrapper (its -isystem ordering defeats C++ #include_next).
+              # Use the unwrapped compiler and add the crt/libgcc search paths
+              # for cmake's try-compile links. Exported here so nix develop's
+              # store-path rewriting does not reduce CC/CXX to bare names.
+              export CC="${pkgs.gcc.cc}/bin/gcc"
+              export CXX="${pkgs.gcc.cc}/bin/g++"
+              export CFLAGS="-B${pkgs.glibc}/lib/ -L${pkgs.glibc}/lib -L${pkgs.gcc.cc.lib}/lib"
+              export CXXFLAGS="$CFLAGS"
+            '';
           };
         }
       );
