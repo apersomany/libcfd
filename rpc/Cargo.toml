@@ -4,3 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+capnp = "0.27.0"
+futures-io = "0.3"
+thiserror = "2"
+tracing = "0.1"
+
+[build-dependencies]
+capnpc = "0.27.0"
+capnpc-embedded = "0.2"
+
+[dev-dependencies]
+futures = "0.3"
+tokio = { version = "1", features = ["io-util", "rt", "macros", "net"] }

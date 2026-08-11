@@ -1,0 +1,350 @@
+use capnp::traits::ImbueMut;
+use core::pin::Pin;
+use core::task::{Context, Poll};
+use futures::io::Cursor;
+use libcfd_rpc::{quic_metadata_protocol_capnp, rpc_capnp, tunnelrpc_capnp};
+use tokio::io::{AsyncRead as _, AsyncWrite as _, AsyncWriteExt as _};
+
+/// Bridges a tokio duplex stream to futures-io traits.
+struct TokioBridge(tokio::io::DuplexStream);
+
+impl futures::io::AsyncRead for TokioBridge {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut rb = tokio::io::ReadBuf::new(buf);
+        match Pin::new(&mut self.0).poll_read(cx, &mut rb) {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(rb.filled().len())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl futures::io::AsyncWrite for TokioBridge {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+use core::marker::Unpin;
+impl Unpin for TokioBridge {}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Golden bytes produced by capnp-go (the wire format cloudflared uses).
+const GOLDEN: &[(&str, &str)] = &[
+    (
+        "bootstrap",
+        "000000000500000000000000010001000800000000000000000000000100010000000000000000000000000000000000",
+    ),
+    (
+        "call",
+        "000000003000000000000000010001000200000000000000000000000300030001000000000000009754e87fec9516f7000000000000000008000000010001000c0000000000020000000000000000000000000000000000000000000000000004000000010003008900000007000000000000000000000008000000000002001d000000820000002000000001000200050000008200000009000000820000006163636f756e742d7461672d313233000102030405060708090a0b0c0d0e0f10aabbccddeeff001122334455667788990000010000000000040000000000040049000000220000000d0000008200000011000000160000002d0000004a00000031000000620000003031323334353637383961626364656605000000a20000000d000000a2000000616c6c6f775f72656d6f74655f636f6e6669670000000000737570706f72745f646174616772616d5f76320000000000323032362e372e3300000000000000006c696e75782f616d64363400000000000a000001000000000000000001000100",
+    ),
+    (
+        "bootstrap-return",
+        "000000000b00000000000000010001000300000000000000000000000200010000000000010000000000000000000000000000000000020003000000000000000100000017000000040000000100010001000000000000000000000000000000",
+    ),
+    (
+        "register-return",
+        "0000000012000000000000000100010003000000000000000000000002000100010000000100000000000000000000000000000000000200040000000000010025000000070000000000000001000100010000000000000000000000010002000000000000000000050000008200000009000000220000000102030405060708090a0b0c0d0e0f106c687200000000000000000001000100",
+    ),
+    (
+        "unregister-call",
+        "000000000e00000000000000010001000200000000000000000000000300030002000000010000009754e87fec9516f7000000000000000008000000010001000c00000000000200000000000000000000000000000000000000000000000000fcffffff0000000001000000070000000000000001000100",
+    ),
+    (
+        "finish",
+        "00000000040000000000000001000100040000000000000000000000010000000100000001000000",
+    ),
+    (
+        "empty-return",
+        "0000000009000000000000000100010003000000000000000000000002000100020000000100000000000000000000000000000000000200000000000000000001000000070000000000000001000100",
+    ),
+];
+
+fn golden_hex(name: &str) -> Vec<u8> {
+    let (_, h) = GOLDEN.iter().find(|(n, _)| *n == name).expect("golden");
+    (0..h.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn golden_messages_match_go_reference() {
+    // bootstrap
+    {
+        let mut message = capnp::message::Builder::new_default();
+        let root = message.init_root::<rpc_capnp::message::Builder>();
+        let mut bs = root.init_bootstrap();
+        bs.set_question_id(0);
+        assert_eq!(
+            hex(&capnp::serialize::write_message_to_words(&message)),
+            golden_hex("bootstrap")
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+    }
+    // call registerConnection
+    {
+        let mut message = capnp::message::Builder::new_default();
+        let root = message.init_root::<rpc_capnp::message::Builder>();
+        let mut call = root.init_call();
+        call.set_question_id(1);
+        let mut mt = call.reborrow().init_target();
+        mt.set_imported_cap(0);
+        call.reborrow().set_interface_id(0xf71695ec7fe85497);
+        call.reborrow().set_method_id(0);
+        call.reborrow().init_send_results_to().set_caller(());
+        let mut payload = call.reborrow().init_params();
+        let mut params = payload
+            .reborrow()
+            .init_content()
+            .init_as::<tunnelrpc_capnp::registration_server::register_connection_params::Builder>(
+        );
+        {
+            let mut a = params.reborrow().init_auth();
+            a.set_account_tag("account-tag-123");
+            a.set_tunnel_secret(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        }
+        params.set_tunnel_id(&[
+            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+            0x88, 0x99,
+        ]);
+        params.set_conn_index(0);
+        {
+            let mut o = params.reborrow().init_options();
+            let mut c = o.reborrow().init_client();
+            c.set_client_id(b"0123456789abcdef");
+            let mut feats = c.reborrow().init_features(2);
+            feats.set(0, "allow_remote_config");
+            feats.set(1, "support_datagram_v2");
+            c.set_version("2026.7.3");
+            c.set_arch("linux/amd64");
+            o.set_origin_local_ip(&[10, 0, 0, 1]);
+            o.set_replace_existing(false);
+            o.set_compression_quality(0);
+            o.set_num_previous_attempts(1);
+        }
+        payload.reborrow().init_cap_table(0);
+        assert_eq!(
+            hex(&capnp::serialize::write_message_to_words(&message)),
+            golden_hex("call")
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+    }
+    // bootstrap-return
+    {
+        let mut message = capnp::message::Builder::new_default();
+        let mut cap_table: capnp::private::layout::CapTable = Vec::new();
+        let mut root = message.init_root::<rpc_capnp::message::Builder>();
+        root.imbue_mut(&mut cap_table);
+        let mut ret = root.init_return();
+        ret.set_answer_id(0);
+        ret.set_release_param_caps(false);
+        let mut results = ret.init_results();
+        let mut content = results.reborrow().init_content();
+        content.set_as_capability(Box::new(StubHook));
+        let mut ctab = results.init_cap_table(1);
+        ctab.reborrow().get(0).set_sender_hosted(0);
+        assert_eq!(
+            hex(&capnp::serialize::write_message_to_words(&message)),
+            golden_hex("bootstrap-return")
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+    }
+    // register-return
+    {
+        let mut message = capnp::message::Builder::new_default();
+        let root = message.init_root::<rpc_capnp::message::Builder>();
+        let mut ret = root.init_return();
+        ret.set_answer_id(1);
+        ret.set_release_param_caps(false);
+        let mut res = ret.init_results();
+        let mut rres = res
+            .reborrow()
+            .init_content()
+            .init_as::<tunnelrpc_capnp::registration_server::register_connection_results::Builder>(
+        );
+        let mut conn_resp = rres.reborrow().init_result();
+        let mut cd = conn_resp.reborrow().init_result().init_connection_details();
+        cd.set_uuid(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        cd.set_location_name("lhr");
+        cd.set_tunnel_is_remotely_managed(false);
+        res.reborrow().init_cap_table(0);
+        assert_eq!(
+            hex(&capnp::serialize::write_message_to_words(&message)),
+            golden_hex("register-return")
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+    }
+    // finish
+    {
+        let mut message = capnp::message::Builder::new_default();
+        let root = message.init_root::<rpc_capnp::message::Builder>();
+        let mut f = root.init_finish();
+        f.set_question_id(1);
+        f.set_release_result_caps(false);
+        assert_eq!(
+            hex(&capnp::serialize::write_message_to_words(&message)),
+            golden_hex("finish")
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+    }
+}
+
+#[tokio::test]
+async fn framing_round_trip() {
+    let (a, b) = tokio::io::duplex(4096);
+    let (mut a, mut b) = (a, TokioBridge(b));
+    // Write a message on side a, read it on side b.
+    let mut message = capnp::message::Builder::new_default();
+    let root = message.init_root::<rpc_capnp::message::Builder>();
+    let mut bs = root.init_bootstrap();
+    bs.set_question_id(7);
+    let bytes = capnp::serialize::write_message_to_words(&message);
+    a.write_all(&bytes).await.unwrap();
+
+    let reader = libcfd_rpc::io::read_message(&mut b).await.unwrap();
+    let root = reader.get_root::<rpc_capnp::message::Reader>().unwrap();
+    match root.reborrow().which().unwrap() {
+        rpc_capnp::message::Bootstrap(bs) => {
+            assert_eq!(bs.unwrap().get_question_id(), 7);
+        }
+        _ => panic!("expected bootstrap"),
+    }
+}
+
+#[tokio::test]
+async fn golden_messages_parse() {
+    // The golden call message should parse as a call targeting the
+    // registration server.
+    let mut stream = Cursor::new(golden_hex("call"));
+    let reader = libcfd_rpc::io::read_message(&mut stream).await.unwrap();
+    let root = reader.get_root::<rpc_capnp::message::Reader>().unwrap();
+    match root.reborrow().which().unwrap() {
+        rpc_capnp::message::Call(c) => {
+            let c = c.unwrap();
+            assert_eq!(c.get_question_id(), 1);
+            assert_eq!(c.get_interface_id(), 0xf71695ec7fe85497);
+            assert_eq!(c.get_method_id(), 0);
+            let target = c.get_target().unwrap();
+            match target.reborrow().which().unwrap() {
+                rpc_capnp::message_target::ImportedCap(id) => assert_eq!(id, 0),
+                _ => panic!("expected importedCap"),
+            }
+        }
+        _ => panic!("expected call"),
+    }
+}
+
+#[test]
+fn connect_request_round_trip() {
+    let mut message = capnp::message::Builder::new_default();
+    let mut root = message.init_root::<quic_metadata_protocol_capnp::connect_request::Builder>();
+    root.set_dest("http://example.com/path");
+    root.set_type(quic_metadata_protocol_capnp::ConnectionType::Http);
+    {
+        let mut md = root.reborrow().init_metadata(2);
+        {
+            let mut e0 = md.reborrow().get(0);
+            e0.set_key("HttpMethod");
+            e0.set_val("GET");
+        }
+        {
+            let mut e1 = md.reborrow().get(1);
+            e1.set_key("HttpHost");
+            e1.set_val("example.com");
+        }
+    }
+    let words = capnp::serialize::write_message_to_words(&message);
+    let mut bytes = words.as_slice();
+    let reader = capnp::serialize::read_message_from_flat_slice(
+        &mut bytes,
+        capnp::message::ReaderOptions::new(),
+    )
+    .unwrap();
+    let r = reader
+        .get_root::<quic_metadata_protocol_capnp::connect_request::Reader>()
+        .unwrap();
+    assert_eq!(r.get_dest().unwrap(), "http://example.com/path");
+    assert_eq!(
+        r.get_type().unwrap(),
+        quic_metadata_protocol_capnp::ConnectionType::Http
+    );
+    let md = r.get_metadata().unwrap();
+    assert_eq!(md.len(), 2);
+    assert_eq!(md.get(0).get_key().unwrap(), "HttpMethod");
+    assert_eq!(md.get(0).get_val().unwrap(), "GET");
+    assert_eq!(md.get(1).get_key().unwrap(), "HttpHost");
+    assert_eq!(md.get(1).get_val().unwrap(), "example.com");
+}
+
+#[derive(Clone)]
+pub struct StubHook;
+impl capnp::private::capability::ClientHook for StubHook {
+    fn add_ref(&self) -> Box<dyn capnp::private::capability::ClientHook> {
+        Box::new(StubHook)
+    }
+    fn new_call(
+        &self,
+        _i: u64,
+        _m: u16,
+        _s: Option<capnp::MessageSize>,
+    ) -> capnp::capability::Request<capnp::any_pointer::Owned, capnp::any_pointer::Owned> {
+        unimplemented!()
+    }
+    fn call(
+        &self,
+        _i: u64,
+        _m: u16,
+        _p: Box<dyn capnp::private::capability::ParamsHook>,
+        _r: Box<dyn capnp::private::capability::ResultsHook>,
+    ) -> capnp::capability::Promise<(), capnp::Error> {
+        unimplemented!()
+    }
+    fn get_brand(&self) -> usize {
+        0
+    }
+    fn get_ptr(&self) -> usize {
+        0
+    }
+    fn get_resolved(&self) -> Option<Box<dyn capnp::private::capability::ClientHook>> {
+        None
+    }
+    fn when_more_resolved(
+        &self,
+    ) -> Option<
+        capnp::capability::Promise<Box<dyn capnp::private::capability::ClientHook>, capnp::Error>,
+    > {
+        None
+    }
+    fn when_resolved(&self) -> capnp::capability::Promise<(), capnp::Error> {
+        capnp::capability::Promise::ok(())
+    }
+}

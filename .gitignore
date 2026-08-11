@@ -4,3 +4,6 @@
 
 .envrc
 .direnv
+
+# Orchestration scratch dir
+.pi-subagents/
