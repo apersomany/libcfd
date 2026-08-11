@@ -86,3 +86,58 @@ impl Error {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_public_error_path_is_typed_and_displayable() {
+        let errors = [
+            Error::QuickTunnelApi("rate limited".into()),
+            Error::QuickTunnelResponse("bad json".into()),
+            Error::QuickTunnelRequest(std::io::Error::other("dns")),
+            Error::NamedTunnelCredentials("missing file".into()),
+            Error::EdgeDiscovery("no srv records".into()),
+            Error::Quic("handshake failed".into()),
+            Error::Registration(libcfd_rpc::tunnel::RegistrationFailure::Permanent(
+                "blocked".into(),
+            )),
+            Error::DuplicateConnection("EDUPCONN".into()),
+            Error::H2("connection reset".into()),
+            Error::Control(libcfd_rpc::RpcError::Eof),
+            Error::Tls("bad certificate".into()),
+            Error::Origin("handler failed".into()),
+            Error::Io(std::io::Error::other("io")),
+            Error::Shutdown,
+        ];
+        for error in errors {
+            let display = error.to_string();
+            assert!(!display.is_empty());
+        }
+    }
+
+    #[test]
+    fn registration_failure_classifies_permanent() {
+        let retryable = libcfd_rpc::tunnel::RegistrationFailure::Retryable {
+            cause: "busy".into(),
+            retry_after: 1_000,
+        };
+        let permanent = libcfd_rpc::tunnel::RegistrationFailure::Permanent("blocked".into());
+        assert!(!Error::Registration(retryable).is_permanent());
+        assert!(Error::Registration(permanent).is_permanent());
+    }
+
+    #[test]
+    fn io_error_converts_from_std() {
+        let source = std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout");
+        let error: Error = source.into();
+        assert!(matches!(error, Error::Io(_)));
+    }
+
+    #[test]
+    fn rpc_error_converts_into_control_variant() {
+        let error: Error = libcfd_rpc::RpcError::Eof.into();
+        assert!(matches!(error, Error::Control(_)));
+    }
+}

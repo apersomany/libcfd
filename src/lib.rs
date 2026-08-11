@@ -33,6 +33,9 @@
 //! - no Tokio types are exposed; callers drive the returned futures on a
 //!   Tokio runtime (execution uses Tokio internally);
 //! - every public future is `Send`;
+//! - all public entry points return the typed [`Error`] (thiserror); the RPC
+//!   crate exposes its own typed [`libcfd_rpc::RpcError`] and
+//!   `RegistrationFailure`;
 //! - `tracing` is used for diagnostics and no global subscriber is installed.
 
 #[cfg(feature = "quick-tunnel")]
