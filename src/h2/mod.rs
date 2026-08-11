@@ -6,7 +6,7 @@
 //! `Cf-Cloudflared-Proxy-Connection-Upgrade: control-stream` hosts the
 //! registration RPC in its body.
 
-mod headers;
+pub(crate) mod headers;
 mod stream;
 
 use std::net::SocketAddr;
@@ -22,10 +22,10 @@ use tokio::net::TcpStream;
 
 use crate::control::{self, RegistrationOptions};
 use crate::error::{Error, Result};
+use crate::event::Event;
 use crate::origin::{Body, Origin, Request, Response};
 use crate::roots;
 use crate::serve::pump;
-use crate::shutdown::Shutdown;
 use crate::tunnel::Tunnel;
 
 pub(crate) use headers::{
@@ -45,9 +45,10 @@ pub(crate) struct H2Shared {
     pub origin: Arc<Origin>,
     pub reg_opts: Arc<RegistrationOptions>,
     pub config_json: Arc<Vec<u8>>,
-    pub shutdown: Arc<Shutdown>,
+    pub shutdown: Arc<Event>,
     pub control_shutdown: Arc<tokio::sync::Notify>,
-    pub connect_timeout: Duration,
+    /// Fires once registration completes on the control stream.
+    pub registered: Event,
     pub grace_period: Duration,
 }
 
@@ -90,11 +91,15 @@ impl H2EdgeConnection {
     /// Serves the connection until the edge closes it or shutdown fires:
     /// accepts edge streams, runs the registration RPC on the control
     /// stream, and dispatches request streams to the origin handlers.
+    ///
+    /// On shutdown the control task unregisters and in-flight streams are
+    /// drained, both bounded by the grace period.
     pub(crate) async fn serve(mut self, shared: Arc<H2Shared>) -> Result<()> {
         let (reg_tx, mut reg_rx) = tokio::sync::oneshot::channel();
         let mut reg_tx = Some(reg_tx);
         let mut control_task: Option<tokio::task::JoinHandle<Result<()>>> = None;
         let mut reg_done = false;
+        let mut stream_tasks: tokio::task::JoinSet<Result<()>> = tokio::task::JoinSet::new();
         loop {
             tokio::select! {
                 request = self.conn.accept() => {
@@ -115,30 +120,44 @@ impl H2EdgeConnection {
                                 }
                             } else {
                                 let shared = shared.clone();
-                                tokio::task::spawn(async move {
-                                    if let Err(e) = handle_stream(request, respond, shared).await {
-                                        tracing::debug!("h2 stream failed: {e}");
-                                    }
+                                stream_tasks.spawn(async move {
+                                    handle_stream(request, respond, shared).await
                                 });
                             }
                         }
-                        Some(Err(e)) => return Err(Error::H2(format!("connection error: {e}"))),
-                        None => return Ok(()),
+                        Some(Err(e)) => {
+                            shared.control_shutdown.notify_waiters();
+                            stream_tasks.abort_all();
+                            return Err(Error::H2(format!("connection error: {e}")));
+                        }
+                        None => {
+                            shared.control_shutdown.notify_waiters();
+                            stream_tasks.abort_all();
+                            return Ok(());
+                        }
                     }
                 }
                 result = &mut reg_rx, if !reg_done => {
                     reg_done = true;
                     match result {
                         Ok(Ok(())) => {}
-                        Ok(Err(e)) => return Err(e),
+                        Ok(Err(e)) => {
+                            shared.control_shutdown.notify_waiters();
+                            stream_tasks.abort_all();
+                            return Err(e);
+                        }
                         Err(_) => {
+                            shared.control_shutdown.notify_waiters();
+                            stream_tasks.abort_all();
                             return Err(Error::H2(
                                 "control stream ended before registration".into(),
-                            ))
+                            ));
                         }
                     }
                 }
-                _ = tokio::time::sleep(shared.connect_timeout), if !reg_done => {
+                _ = tokio::time::sleep(control::RPC_TIMEOUT), if !reg_done => {
+                    shared.control_shutdown.notify_waiters();
+                    stream_tasks.abort_all();
                     return Err(Error::H2("registration timed out".into()));
                 }
                 _ = shared.shutdown.notified() => {
@@ -147,6 +166,13 @@ impl H2EdgeConnection {
                 }
             }
         }
+        // Graceful shutdown: wait for in-flight request streams to drain
+        // (cloudflared waits activeRequestsWG), then for the control task's
+        // unregister RPC, both bounded by the grace period.
+        let _ = tokio::time::timeout(shared.grace_period, async {
+            while stream_tasks.join_next().await.is_some() {}
+        })
+        .await;
         if let Some(task) = control_task {
             let _ = tokio::time::timeout(shared.grace_period, task).await;
         }
@@ -212,6 +238,7 @@ async fn handle_control_stream(
             return Ok(());
         }
     };
+    shared.registered.fire();
     let _ = reg_tx.send(Ok(()));
     shared.control_shutdown.notified().await;
     let _ = control::unregister(client, shared.grace_period).await;
@@ -334,7 +361,7 @@ async fn handle_h2_configuration(
         .and_then(|v| v.get("version").and_then(|v| v.as_i64()))
         .unwrap_or(0);
     // libcfd tunnels are locally managed; acknowledge without applying.
-    let reply = format!(r#"{{"lastAppliedVersion":{version},"err":""}}"#);
+    let reply = format!(r#"{{"lastAppliedVersion":{version},"err":null}}"#);
     let send = respond.send_response(http::Response::new(()), false)?;
     let mut writer = SendStreamWriter::new(send);
     writer.write_all(reply.as_bytes()).await?;

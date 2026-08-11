@@ -4,7 +4,7 @@ mod stream;
 pub(crate) mod tls;
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::task::Waker;
 use std::time::Duration;
@@ -34,6 +34,7 @@ pub(crate) struct Inner {
     pub(crate) write_wakers: HashMap<u64, Waker>,
     pub(crate) established: bool,
     pub(crate) closed: bool,
+    pub(crate) timed_out: bool,
     pub(crate) close_reason: Option<String>,
 }
 
@@ -42,7 +43,6 @@ pub(crate) struct QuicConnection {
     pub(crate) inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
     seq_tx: watch::Sender<u64>,
-    local_ip: IpAddr,
 }
 
 impl QuicConnection {
@@ -83,6 +83,7 @@ impl QuicConnection {
             write_wakers: HashMap::new(),
             established: false,
             closed: false,
+            timed_out: false,
             close_reason: None,
         }));
         let notify = Arc::new(Notify::new());
@@ -94,19 +95,9 @@ impl QuicConnection {
             inner,
             notify,
             seq_tx,
-            local_ip: local.ip(),
         };
         conn.wait_established().await?;
         Ok(conn)
-    }
-
-    /// The local IP the connection is bound to, as raw bytes (4 for IPv4,
-    /// 16 for IPv6), matching the `originLocalIp` field cloudflared sends.
-    pub(crate) fn local_ip(&self) -> Vec<u8> {
-        match self.local_ip {
-            IpAddr::V4(ip) => ip.octets().to_vec(),
-            IpAddr::V6(ip) => ip.octets().to_vec(),
-        }
     }
 
     async fn wait_established(&self) -> Result<()> {
@@ -279,11 +270,18 @@ pub(crate) async fn drive(
             let closed = g.conn.is_closed();
             if closed {
                 g.closed = true;
+                g.timed_out = g.conn.is_timed_out();
                 g.close_reason = Some(
                     g.conn
                         .peer_error()
                         .map(|e| format!("{e:?}"))
-                        .unwrap_or_else(|| "connection closed".into()),
+                        .unwrap_or_else(|| {
+                            if g.timed_out {
+                                "idle timeout".into()
+                            } else {
+                                "connection closed".into()
+                            }
+                        }),
                 );
             }
             closed

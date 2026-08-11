@@ -22,10 +22,12 @@ const DRAIN_LIMIT: u64 = 256 * 1024;
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Accepts incoming streams and dispatches each new data stream to a
-/// per-request task. The control stream (id 0) is skipped.
+/// per-request task. The control stream (id 0) is skipped. Completed
+/// streams are removed from the active set so it stays bounded.
 pub(crate) async fn serve_requests(conn: Arc<QuicConnection>, origin: Arc<Origin>) -> Result<()> {
     let mut active = HashSet::new();
     active.insert(0);
+    let mut tasks = tokio::task::JoinSet::new();
     let mut rx = conn.subscribe();
     loop {
         let new_ids = {
@@ -45,15 +47,28 @@ pub(crate) async fn serve_requests(conn: Arc<QuicConnection>, origin: Arc<Origin
         for id in new_ids {
             let c = conn.clone();
             let o = origin.clone();
-            tokio::spawn(async move {
-                if let Err(e) = serve_stream(c, o.as_ref(), id).await {
-                    tracing::debug!(stream = id, "request stream failed: {e}");
-                }
+            tasks.spawn(async move {
+                let result = serve_stream(c, o.as_ref(), id).await;
+                (id, result)
             });
         }
-        // Wait for the next connection event before rescanning, so idle
-        // connections do not spin.
-        let _ = rx.changed().await;
+        tokio::select! {
+            _ = rx.changed() => {}
+            joined = tasks.join_next(), if !tasks.is_empty() => {
+                match joined {
+                    Some(Ok((id, result))) => {
+                        active.remove(&id);
+                        if let Err(e) = result {
+                            tracing::debug!(stream = id, "request stream failed: {e}");
+                        }
+                    }
+                    Some(Err(e)) => {
+                        tracing::debug!("request stream task failed: {e}");
+                    }
+                    None => {}
+                }
+            }
+        }
     }
 }
 
@@ -240,7 +255,11 @@ fn cancel_write(conn: &QuicConnection, stream_id: u64) {
 }
 
 /// Pumps bytes in both directions between an origin duplex and the edge
-/// stream until either side reaches the end, then closes both write halves.
+/// stream until both directions reach the end.
+///
+/// Mirrors cloudflared's `PipeBidirectional`: each direction closes only
+/// its own destination write side when the source ends, and the other
+/// direction keeps pumping until it ends as well.
 pub(crate) async fn pump<R, W>(origin: Duplex, edge_read: R, edge_write: W) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -249,20 +268,53 @@ where
     let (mut origin_read, mut origin_write) = origin.into_parts();
     let mut edge_read = edge_read;
     let mut edge_write = edge_write;
-    let edge_to_origin = futures_util::io::copy(&mut edge_read, &mut origin_write);
-    let origin_to_edge = futures_util::io::copy(&mut origin_read, &mut edge_write);
-    tokio::pin!(edge_to_origin);
-    tokio::pin!(origin_to_edge);
-    tokio::select! {
-        result = &mut edge_to_origin => {
-            result.map_err(Error::Io)?;
+    let mut edge_done = false;
+    let mut origin_done = false;
+    let mut e_buf = [0u8; 8192];
+    let mut o_buf = [0u8; 8192];
+    loop {
+        if edge_done && origin_done {
+            break;
         }
-        result = &mut origin_to_edge => {
-            result.map_err(Error::Io)?;
+        tokio::select! {
+            read = edge_read.read(&mut e_buf), if !edge_done => {
+                match read {
+                    Ok(0) => {
+                        edge_done = true;
+                        let _ = origin_write.close().await;
+                    }
+                    Ok(n) => {
+                        if let Err(e) = origin_write.write_all(&e_buf[..n]).await {
+                            tracing::debug!("origin write failed: {e}");
+                            edge_done = true;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("edge read failed: {e}");
+                        edge_done = true;
+                    }
+                }
+            }
+            read = origin_read.read(&mut o_buf), if !origin_done => {
+                match read {
+                    Ok(0) => {
+                        origin_done = true;
+                        let _ = edge_write.close().await;
+                    }
+                    Ok(n) => {
+                        if let Err(e) = edge_write.write_all(&o_buf[..n]).await {
+                            tracing::debug!("edge write failed: {e}");
+                            origin_done = true;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("origin read failed: {e}");
+                        origin_done = true;
+                    }
+                }
+            }
         }
     }
-    let _ = edge_write.close().await;
-    let _ = origin_write.close().await;
     Ok(())
 }
 
@@ -320,22 +372,41 @@ fn drain_unread(conn: Arc<QuicConnection>, stream_id: u64) {
         let mut buf = [0u8; 8192];
         let mut total: u64 = 0;
         let mut read = 0;
+        let mut gave_up = false;
         loop {
             let res = tokio::time::timeout(DRAIN_TIMEOUT, drain.read(&mut buf)).await;
             match res {
                 Ok(Ok(n)) if n > 0 => {
                     total = total.saturating_add(n as u64);
                     if total >= DRAIN_LIMIT {
+                        gave_up = true;
                         break;
                     }
                 }
                 Ok(Ok(_)) => break, // EOF
-                Ok(Err(_)) => break,
-                Err(_) => break, // drain timed out; give up
+                Ok(Err(_)) => {
+                    gave_up = true;
+                    break;
+                }
+                Err(_) => {
+                    gave_up = true;
+                    break; // drain timed out; give up
+                }
             }
             read += 1;
             if read > 4096 {
+                gave_up = true;
                 break;
+            }
+        }
+        if gave_up {
+            // Abandoned uploads beyond the drain limit would hold the
+            // connection flow-control window open forever; reset the read
+            // side so the edge stops sending (cloudflared cancels the
+            // stream in the same situation).
+            let mut g = conn.inner.lock().unwrap();
+            if !g.closed {
+                let _ = g.conn.stream_shutdown(stream_id, quiche::Shutdown::Read, 0);
             }
         }
     });

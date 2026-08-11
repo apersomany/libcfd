@@ -69,6 +69,15 @@ impl Tunnel {
             Self::Named(_) => None,
         }
     }
+
+    /// The region override carried by the tunnel credentials, if any
+    /// (named tunnels can pin an `Endpoint` that acts as the region).
+    pub(crate) fn region_override(&self) -> Option<String> {
+        match self {
+            Self::Named(t) => t.endpoint.clone(),
+            Self::Quick(_) => None,
+        }
+    }
 }
 
 /// Options for [`create_quick_tunnel`].

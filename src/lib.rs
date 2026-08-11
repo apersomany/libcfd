@@ -28,13 +28,13 @@ mod connector;
 mod control;
 mod edge;
 mod error;
+mod event;
 mod h2;
 mod origin;
 mod quic;
 mod roots;
 mod run;
 mod serve;
-mod shutdown;
 mod tunnel;
 
 pub use connector::{EdgeConnector, EdgeOptions, Transport, default_config_json};

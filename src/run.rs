@@ -19,7 +19,7 @@ use crate::tunnel::{QuickTunnel, Tunnel};
 pub struct RunOptions {
     /// Edge region override (`--region`); `None` uses the default SRV lookup.
     pub region: Option<String>,
-    /// PEM-encoded CA certificates trusted instead of the system store
+    /// PEM-encoded CA certificates trusted in addition to the system store
     /// (mirrors cloudflared's `--ca-cert`).
     pub ca_cert_pem: Option<Vec<u8>>,
     /// JSON configuration pushed to the edge via `updateLocalConfiguration`
@@ -38,7 +38,7 @@ impl Default for RunOptions {
             ca_cert_pem: None,
             config_json: default_config_json().into(),
             connect_timeout: Duration::from_secs(15),
-            backoff: Duration::from_secs(10),
+            backoff: Duration::from_secs(1),
         }
     }
 }

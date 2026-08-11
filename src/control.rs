@@ -15,6 +15,10 @@ use crate::tunnel::Tunnel;
 /// cloudflared's `DuplicateConnectionError`.
 pub(crate) const DUPLICATE_CONNECTION_CAUSE: &str = "EDUPCONN";
 
+/// Bound for a single registration RPC exchange, matching cloudflared's
+/// default `--rpc-timeout` of 5 seconds.
+pub(crate) const RPC_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Default feature list advertised at registration, matching
 /// cloudflared's `features/defaultFeatures`.
 const DEFAULT_FEATURES: &[&str] = &[
@@ -44,11 +48,11 @@ impl Default for RegistrationOptions {
 }
 
 fn build_connection_options(opts: &RegistrationOptions) -> ConnectionOptions {
-    let mut client_id = [0u8; 16];
-    let _ = boring::rand::rand_bytes(&mut client_id);
     ConnectionOptions {
         client: ClientInfo {
-            client_id: client_id.to_vec(),
+            // Cloudflared uses one persistent connector UUID per process;
+            // each new connection reuses it.
+            client_id: connector_client_id().to_vec(),
             features: opts.features.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             arch: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
@@ -58,6 +62,15 @@ fn build_connection_options(opts: &RegistrationOptions) -> ConnectionOptions {
         compression_quality: 0,
         num_previous_attempts: opts.num_previous_attempts,
     }
+}
+
+fn connector_client_id() -> &'static [u8; 16] {
+    static CLIENT_ID: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
+    CLIENT_ID.get_or_init(|| {
+        let mut id = [0u8; 16];
+        let _ = boring::rand::rand_bytes(&mut id);
+        id
+    })
 }
 
 /// Registers the tunnel with the edge on an open control stream and pushes
