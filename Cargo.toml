@@ -31,3 +31,4 @@ webpki-roots = "1.0.9"
 
 [dev-dependencies]
 rcgen = "0.14.9"
+tokio-util = { version = "0.7.19", features = ["compat"] }

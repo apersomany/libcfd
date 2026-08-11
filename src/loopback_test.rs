@@ -15,6 +15,7 @@ use libcfd_rpc::quic::{
 };
 use tokio::net::UdpSocket;
 use tokio::sync::{Notify, watch};
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use crate::control::{self, RegistrationOptions};
 use crate::error::{Error, Result};
@@ -81,6 +82,7 @@ impl MockEdge {
         config.set_initial_max_data(30 << 20);
         config.set_initial_max_stream_data_bidi_local(6 << 20);
         config.set_initial_max_stream_data_bidi_remote(6 << 20);
+        config.set_initial_max_stream_data_uni(6 << 20);
         config.set_initial_max_streams_bidi(1 << 60);
 
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
@@ -164,6 +166,34 @@ impl MockEdge {
                 }
             }
         }
+    }
+
+    /// Opens a raw stream (websocket/tcp), sends a ConnectRequest, reads the
+    /// ConnectResponse, then exchanges a payload with the origin.
+    async fn raw_stream_exchange(
+        &self,
+        stream_id: u64,
+        connect: ConnectRequest,
+        payload: &[u8],
+    ) -> Result<(ConnectResponse, Vec<u8>)> {
+        let mut stream = self.stream(stream_id);
+        stream.write_all(&DATA_STREAM_PROTOCOL_SIGNATURE).await?;
+        stream.write_all(PROTOCOL_V1).await?;
+        write_connect_request(&mut stream, &connect).await?;
+
+        let mut header = [0u8; 8];
+        stream.read_exact(&mut header).await?;
+        assert_eq!(&header[..6], &DATA_STREAM_PROTOCOL_SIGNATURE);
+        assert_eq!(&header[6..], PROTOCOL_V1);
+        let response = read_connect_response(&mut stream).await?;
+
+        stream.write_all(payload).await?;
+        let mut buf = [0u8; 64];
+        let n = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf))
+            .await
+            .map_err(|_| Error::Quic("raw stream exchange timed out".into()))??;
+        stream.finish();
+        Ok((response, buf[..n].to_vec()))
     }
 
     /// Opens a request stream (server-initiated id 1), sends an HTTP request,
@@ -283,4 +313,323 @@ async fn quic_tunnel_end_to_end() {
     serve_task.abort();
     control_task.abort();
     conn.close();
+}
+
+/// A websocket origin that answers with 101 and echoes the raw stream
+/// through a loopback TCP connection to `addr`.
+struct EchoWsOrigin {
+    addr: std::net::SocketAddr,
+}
+
+impl crate::origin::WebSocketOrigin for EchoWsOrigin {
+    async fn connect(&self, request: Request) -> Result<crate::origin::WebSocketConnection> {
+        let sock = tokio::net::TcpStream::connect(self.addr).await?;
+        let (r, w) = sock.into_split();
+        let mut headers = http::HeaderMap::new();
+        let key = request
+            .headers
+            .get("sec-websocket-key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        headers.insert(
+            "Sec-WebSocket-Accept",
+            http::HeaderValue::from_str(&crate::h2::websocket_accept(key)).unwrap(),
+        );
+        Ok(crate::origin::WebSocketConnection {
+            response: Response::new(
+                http::StatusCode::SWITCHING_PROTOCOLS,
+                headers,
+                Body::empty(),
+            ),
+            origin: crate::origin::Duplex::new(r.compat(), w.compat_write()),
+        })
+    }
+}
+
+/// A TCP origin that echoes the raw stream through a loopback connection.
+struct EchoTcpOrigin {
+    addr: std::net::SocketAddr,
+}
+
+impl crate::origin::TcpOrigin for EchoTcpOrigin {
+    async fn connect(&self, _request: Request) -> Result<crate::origin::Duplex> {
+        let sock = tokio::net::TcpStream::connect(self.addr).await?;
+        let (r, w) = sock.into_split();
+        Ok(crate::origin::Duplex::new(r.compat(), w.compat_write()))
+    }
+}
+
+async fn echo_server() -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut sock, _) = match listener.accept().await {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+            tokio::spawn(async move {
+                let (mut r, mut w) = sock.split();
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn quic_websocket_tcp_round_trip() {
+    let certified = rcgen::generate_simple_self_signed(vec![
+        "quic.cftunnel.com".to_string(),
+        "localhost".to_string(),
+    ])
+    .expect("cert");
+    let ca_pem = certified.cert.pem().into_bytes();
+    let (edge_addr, edge_task) = MockEdge::start(&certified).await;
+    let echo_addr = echo_server().await;
+
+    let conn = tokio::time::timeout(
+        Duration::from_secs(15),
+        QuicConnection::connect(edge_addr, Some(&ca_pem)),
+    )
+    .await
+    .expect("client handshake timeout")
+    .expect("client should complete the quic handshake");
+    let edge = edge_task.await.expect("mock edge task").expect("mock edge");
+    edge.wait_established().await;
+
+    let edge_control = Arc::new(edge);
+    let control_task = tokio::spawn({
+        let e = edge_control.clone();
+        async move { e.serve_control().await }
+    });
+    let tunnel = Tunnel::quick(make_tunnel());
+    let opts = RegistrationOptions::default();
+    let (_details, _client) = tokio::time::timeout(
+        Duration::from_secs(15),
+        control::register(&conn, &tunnel, &opts, br#"{"ingress":[]}"#),
+    )
+    .await
+    .expect("registration timeout")
+    .expect("client should register with the mock edge");
+
+    let origin = Origin::http(|_request: Request| async move {
+        Ok(Response::new(
+            http::StatusCode::NOT_FOUND,
+            http::HeaderMap::new(),
+            Body::empty(),
+        ))
+    })
+    .with_websocket(EchoWsOrigin { addr: echo_addr })
+    .with_tcp(EchoTcpOrigin { addr: echo_addr });
+
+    let conn = Arc::new(conn);
+    let serve_task = tokio::spawn(serve::serve_requests(conn.clone(), Arc::new(origin)));
+
+    // Websocket stream (server-initiated id 5).
+    let (ws_response, ws_echo) = edge_control
+        .raw_stream_exchange(
+            5,
+            ConnectRequest {
+                dest: "http://example.com/ws".into(),
+                conn_type: ConnectionType::Websocket,
+                metadata: vec![
+                    ("HttpMethod".into(), "GET".into()),
+                    ("HttpHost".into(), "example.com".into()),
+                    (
+                        "HttpHeader:sec-websocket-key".into(),
+                        "dGhlIHNhbXBsZSBub25jZQ==".into(),
+                    ),
+                ],
+            },
+            b"ping-ws",
+        )
+        .await
+        .expect("mock edge should get a websocket response");
+    assert_eq!(ws_echo, b"ping-ws");
+    let ws_status = ws_response
+        .metadata
+        .iter()
+        .find(|(k, _)| k == "HttpStatus")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert_eq!(ws_status, "101");
+    assert!(ws_response.metadata.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("HttpHeader:Sec-WebSocket-Accept")
+            && v == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+    }));
+
+    // TCP stream (server-initiated id 5).
+    let (tcp_response, tcp_echo) = edge_control
+        .raw_stream_exchange(
+            9,
+            ConnectRequest {
+                dest: "10.0.0.1:8080".into(),
+                conn_type: ConnectionType::Tcp,
+                metadata: vec![],
+            },
+            b"ping-tcp",
+        )
+        .await
+        .expect("mock edge should get a tcp response");
+    assert_eq!(tcp_echo, b"ping-tcp");
+    assert!(tcp_response.error.is_empty());
+    assert!(!tcp_response.metadata.iter().any(|(k, _)| k == "HttpStatus"));
+
+    serve_task.abort();
+    control_task.abort();
+    conn.close();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn h2_tunnel_end_to_end() {
+    use bytes::Bytes;
+
+    let certified = rcgen::generate_simple_self_signed(vec![
+        "h2.cftunnel.com".to_string(),
+        "localhost".to_string(),
+    ])
+    .expect("cert");
+    let ca_pem = certified.cert.pem().into_bytes();
+    let cert = rustls_pki_types::CertificateDer::from(certified.cert.der().to_vec());
+    let key =
+        rustls_pki_types::PrivateKeyDer::try_from(certified.signing_key.serialize_der().to_vec())
+            .expect("key der");
+    let server_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)
+        .expect("server config");
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let edge_addr = listener.local_addr().unwrap();
+
+    let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let edge_task = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.expect("accept");
+        let tls = acceptor.accept(tcp).await.expect("tls accept");
+        let (mut client, conn) = h2::client::handshake(tls)
+            .await
+            .expect("h2 client handshake");
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        client = client.ready().await.expect("client ready");
+
+        let control_request = http::Request::builder()
+            .method("POST")
+            .uri("https://example.com/")
+            .header("Cf-Cloudflared-Proxy-Connection-Upgrade", "control-stream")
+            .body(())
+            .unwrap();
+        let (response_future, send) = client
+            .send_request(control_request, false)
+            .expect("send control request");
+        let response = response_future.await.expect("control response");
+        assert_eq!(response.status(), http::StatusCode::OK);
+        let (_, recv) = response.into_parts();
+        let mut bidi = crate::h2::H2Bidi::new(recv, send);
+        loop {
+            match libcfd_rpc::read_incoming(&mut bidi)
+                .await
+                .expect("read incoming")
+            {
+                Some(Incoming::Bootstrap { .. }) => {
+                    libcfd_rpc::io::write_raw(&mut bidi, &hex(BOOTSTRAP_RETURN))
+                        .await
+                        .unwrap();
+                }
+                Some(Incoming::Call { method_id: 0, .. }) => {
+                    libcfd_rpc::io::write_raw(&mut bidi, &hex(REGISTER_RETURN))
+                        .await
+                        .unwrap();
+                }
+                Some(Incoming::Call { method_id: 2, .. }) => {
+                    libcfd_rpc::io::write_raw(&mut bidi, &hex(EMPTY_RETURN))
+                        .await
+                        .unwrap();
+                    break;
+                }
+                Some(Incoming::Call { method_id: 1, .. }) => {
+                    libcfd_rpc::io::write_raw(&mut bidi, &hex(EMPTY_RETURN))
+                        .await
+                        .unwrap();
+                    break;
+                }
+                Some(_) => {}
+                None => panic!("control stream ended during registration"),
+            }
+        }
+        drop(bidi);
+
+        let request = http::Request::builder()
+            .method("GET")
+            .uri("http://example.com/hello")
+            .header("host", "example.com")
+            .body(())
+            .unwrap();
+        let (response_future, mut send) = client
+            .send_request(request, false)
+            .expect("send data request");
+        send.send_data(Bytes::from_static(b"ping"), true).unwrap();
+        let response = response_future.await.expect("data response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let (_, mut body) = response.into_parts();
+        let mut resp_body = Vec::new();
+        while let Some(chunk) = body.data().await {
+            let chunk = chunk.expect("body chunk");
+            resp_body.extend_from_slice(&chunk);
+        }
+        (status, headers, resp_body)
+    });
+
+    let (conn, _local_ip) = crate::h2::H2EdgeConnection::connect(edge_addr, Some(&ca_pem))
+        .await
+        .expect("h2 edge connect");
+    let shutdown = crate::shutdown::Shutdown::new();
+    let tunnel = Arc::new(Tunnel::quick(make_tunnel()));
+    let origin = Arc::new(Origin::http(move |mut request: Request| {
+        let seen_tx = seen_tx.clone();
+        async move {
+            let body = request.body.collect().await.expect("body read");
+            let _ = seen_tx.send((
+                request.method.as_str().to_string(),
+                request.uri.to_string(),
+                body,
+            ));
+            Ok(Response::new(
+                http::StatusCode::OK,
+                http::HeaderMap::new(),
+                Body::from_bytes(b"pong".to_vec()),
+            ))
+        }
+    }));
+    let shared = Arc::new(crate::h2::H2Shared {
+        tunnel: tunnel.clone(),
+        origin: origin.clone(),
+        reg_opts: Arc::new(RegistrationOptions::default()),
+        config_json: Arc::new(br#"{"ingress":[]}"#.to_vec()),
+        shutdown: shutdown.clone(),
+        control_shutdown: Arc::new(Notify::new()),
+        connect_timeout: Duration::from_secs(15),
+        grace_period: Duration::from_secs(30),
+    });
+    let serve_task = tokio::spawn(conn.serve(shared));
+
+    let (status, headers, resp_body) = edge_task.await.expect("edge task");
+    assert_eq!(status, http::StatusCode::OK);
+    assert_eq!(resp_body, b"pong");
+    assert!(headers.contains_key("cf-cloudflared-response-meta"));
+
+    let (method, uri, request_body) = seen_rx
+        .recv()
+        .await
+        .expect("origin handler should observe the request");
+    assert_eq!(method, "GET");
+    assert_eq!(uri, "http://example.com/hello");
+    assert_eq!(request_body, b"ping");
+
+    shutdown.fire();
+    serve_task.abort();
 }

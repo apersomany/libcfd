@@ -66,6 +66,7 @@ impl QuicConnection {
         config.set_initial_max_data(CONN_RECV_WINDOW);
         config.set_initial_max_stream_data_bidi_local(STREAM_RECV_WINDOW);
         config.set_initial_max_stream_data_bidi_remote(STREAM_RECV_WINDOW);
+        config.set_initial_max_stream_data_uni(STREAM_RECV_WINDOW);
         config.set_initial_max_streams_bidi(MAX_INCOMING_STREAMS);
         config.set_initial_max_streams_uni(MAX_INCOMING_STREAMS);
         config.set_disable_active_migration(true);
