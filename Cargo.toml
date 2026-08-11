@@ -1,0 +1,10 @@
+[workspace]
+members = ["rpc"]
+
+[package]
+name = "libcfd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quiche = "0.29.3"
