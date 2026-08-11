@@ -197,6 +197,12 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
     pub fn into_inner(self) -> RpcClient<S> {
         self.rpc
     }
+
+    /// Releases the registration capability and returns the underlying
+    /// stream, mirroring capnp-go's client `Close()`.
+    pub async fn close(self) -> Result<S> {
+        self.rpc.close().await
+    }
 }
 
 /// Convenience: `ConnectionResponse` with `should_retry` mapped to a typed

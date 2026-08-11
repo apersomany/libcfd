@@ -50,7 +50,9 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
         let payload = match answer.reborrow().which()? {
             rpc_capnp::return_::Results(r) => r?,
             rpc_capnp::return_::Exception(e) => {
-                return Err(RpcError::RemoteCall(e?.get_reason()?.to_str()?.to_string()));
+                let reason = e?.get_reason()?.to_str()?.to_string();
+                self.send_finish(question, true).await?;
+                return Err(RpcError::RemoteCall(reason));
             }
             _ => {
                 return Err(RpcError::Protocol(
@@ -60,6 +62,7 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
         };
         let ctab = payload.get_cap_table()?;
         if ctab.is_empty() {
+            self.send_finish(question, true).await?;
             return Err(RpcError::Protocol(
                 "bootstrap return carried no capability".into(),
             ));
@@ -69,11 +72,15 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
             rpc_capnp::cap_descriptor::SenderHosted(_)
             | rpc_capnp::cap_descriptor::SenderPromise(_) => {
                 self.has_bootstrap = true;
+                self.send_finish(question, false).await?;
                 Ok(0)
             }
-            _ => Err(RpcError::Protocol(
-                "unexpected capability descriptor kind in bootstrap return".into(),
-            )),
+            _ => {
+                self.send_finish(question, true).await?;
+                Err(RpcError::Protocol(
+                    "unexpected capability descriptor kind in bootstrap return".into(),
+                ))
+            }
         }
     }
 
@@ -113,20 +120,42 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
         let payload = match answer.reborrow().which()? {
             rpc_capnp::return_::Results(r) => r?,
             rpc_capnp::return_::Exception(e) => {
-                return Err(RpcError::RemoteCall(e?.get_reason()?.to_str()?.to_string()));
+                let reason = e?.get_reason()?.to_str()?.to_string();
+                self.send_finish(question, true).await?;
+                return Err(RpcError::RemoteCall(reason));
             }
             _ => return Err(RpcError::Protocol("call got unexpected return kind".into())),
         };
         let value = decode(payload)?;
+        self.send_finish(question, false).await?;
+        Ok(value)
+    }
 
+    /// Sends `Message::finish` for a resolved or failed question. Capnp-go
+    /// sends `releaseResultCaps: true` when the return was an exception.
+    async fn send_finish(&mut self, question: u32, release_result_caps: bool) -> Result<()> {
         let mut finish = capnp::message::Builder::new_default();
         let froot = finish.init_root::<rpc_capnp::message::Builder>();
         let mut f = froot.init_finish();
         f.set_question_id(question);
-        f.set_release_result_caps(false);
-        write_message(&mut self.stream, &finish).await?;
+        f.set_release_result_caps(release_result_caps);
+        write_message(&mut self.stream, &finish).await
+    }
 
-        Ok(value)
+    /// Releases the bootstrapped capability and returns the underlying
+    /// stream. Sends `Message::release` for import id 0, mirroring what
+    /// capnp-go sends when a registration client is closed.
+    pub async fn close(mut self) -> Result<S> {
+        if self.has_bootstrap {
+            let mut message = capnp::message::Builder::new_default();
+            let root = message.init_root::<rpc_capnp::message::Builder>();
+            let mut rel = root.init_release();
+            rel.set_id(0);
+            rel.set_reference_count(1);
+            write_message(&mut self.stream, &message).await?;
+            self.has_bootstrap = false;
+        }
+        Ok(self.stream)
     }
 
     fn expect_return<'a>(

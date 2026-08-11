@@ -11,6 +11,7 @@ enum Received {
     Bootstrap,
     Call { interface_id: u64, method_id: u16 },
     Finish { question_id: u32 },
+    Release,
 }
 
 /// Bridges a tokio duplex stream to futures-io traits.
@@ -93,6 +94,53 @@ async fn serve_mock<S: libcfd_rpc::AsyncStream + Unpin>(mut stream: S) -> Vec<Re
                 received.push(Received::Finish {
                     question_id: f.get_question_id(),
                 });
+            }
+            rpc_capnp::message::Release(_) => {
+                received.push(Received::Release);
+            }
+            _ => panic!("mock server: unexpected message"),
+        }
+    }
+    received
+}
+
+/// Same as `serve_mock` but also stops after the release message so tests of
+/// the close path can observe it.
+async fn serve_mock_with_release<S: libcfd_rpc::AsyncStream + Unpin>(
+    mut stream: S,
+) -> Vec<Received> {
+    let mut received = Vec::new();
+    loop {
+        let reader = match libcfd_rpc::io::read_message(&mut stream).await {
+            Ok(r) => r,
+            Err(libcfd_rpc::RpcError::Eof) => break,
+            Err(e) => panic!("mock server read error: {e}"),
+        };
+        let root = reader.get_root::<rpc_capnp::message::Reader>().unwrap();
+        match root.reborrow().which().unwrap() {
+            rpc_capnp::message::Bootstrap(bs) => {
+                let q = bs.unwrap().get_question_id();
+                received.push(Received::Bootstrap);
+                let reply = build_bootstrap_return(q);
+                libcfd_rpc::io::write_raw(&mut stream, &reply)
+                    .await
+                    .unwrap();
+            }
+            rpc_capnp::message::Call(c) => {
+                let c = c.unwrap();
+                received.push(Received::Call {
+                    interface_id: c.get_interface_id(),
+                    method_id: c.get_method_id(),
+                });
+                let reply = build_empty_return(c.get_question_id());
+                libcfd_rpc::io::write_raw(&mut stream, &reply)
+                    .await
+                    .unwrap();
+            }
+            rpc_capnp::message::Finish(_) => {}
+            rpc_capnp::message::Release(_) => {
+                received.push(Received::Release);
+                break;
             }
             _ => panic!("mock server: unexpected message"),
         }
@@ -255,11 +303,12 @@ fn tunnel_client_registers_with_mock_edge() {
 
         let (_client_res, received) = futures::future::join(client_fut, server_fut).await;
 
-        // The client should have done bootstrap(0) -> call(0, register) -> finish.
+        // The client should have done bootstrap(0) -> finish(0) -> call(0, register) -> finish.
         assert_eq!(
             received,
             vec![
                 Received::Bootstrap,
+                Received::Finish { question_id: 0 },
                 Received::Call {
                     interface_id: 0xf71695ec7fe85497,
                     method_id: 0
@@ -361,6 +410,7 @@ fn tunnel_client_unregisters_with_mock_edge() {
             received,
             vec![
                 Received::Bootstrap,
+                Received::Finish { question_id: 0 },
                 Received::Call {
                     interface_id: 0xf71695ec7fe85497,
                     method_id: 1
@@ -368,5 +418,27 @@ fn tunnel_client_unregisters_with_mock_edge() {
                 Received::Finish { question_id: 1 },
             ]
         );
+    });
+}
+
+#[test]
+fn tunnel_client_close_releases_bootstrap_capability() {
+    futures::executor::block_on(async {
+        let (client_half, server_half) = tokio::io::duplex(65536);
+        let client_stream = TokioBridge(client_half);
+        let server_stream = TokioBridge(server_half);
+
+        let client_fut = async move {
+            let rpc = RpcClient::new(client_stream);
+            let mut client = TunnelClient::new(rpc);
+            client.bootstrap().await.unwrap();
+            let stream = client.close().await.unwrap();
+            drop(stream);
+        };
+        let server_fut = async move { serve_mock_with_release(server_stream).await };
+
+        let (_client_res, received) = futures::future::join(client_fut, server_fut).await;
+
+        assert_eq!(received, vec![Received::Bootstrap, Received::Release,]);
     });
 }

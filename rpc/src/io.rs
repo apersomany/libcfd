@@ -17,6 +17,9 @@ impl<T> AsyncStream for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
 ///
 /// Framing: `[u32 LE (numSegments-1)] [per segment: u32 LE word count]
 /// [zero u32 pad to 8-byte alignment] [segment data]`.
+///
+/// Mirrors capnp-go's stream decoder including its `defaultDecodeLimit`
+/// of 64 MiB of total segment data.
 pub async fn read_message<S: AsyncStream + Unpin>(
     stream: &mut S,
 ) -> Result<capnp::message::Reader<capnp::serialize::OwnedSegments>> {
@@ -31,8 +34,15 @@ pub async fn read_message<S: AsyncStream + Unpin>(
     }
 
     let mut builder = capnp::serialize::SegmentLengthsBuilder::with_capacity(segment_count);
-    builder
-        .try_push_segment(u32::from_le_bytes(header[4..8].try_into().expect("4 bytes")) as usize)?;
+    let mut total_words = 0usize;
+    let first = u32::from_le_bytes(header[4..8].try_into().expect("4 bytes")) as usize;
+    total_words = total_words.saturating_add(first);
+    if total_words > MAX_TOTAL_WORDS {
+        return Err(RpcError::Protocol(format!(
+            "message too large: {total_words} words exceeds limit of {MAX_TOTAL_WORDS}"
+        )));
+    }
+    builder.try_push_segment(first)?;
     if segment_count > 1 {
         // Go: streamHeaderSize(maxSeg) = (4 + 4*numSegments + 7) & !7
         let header_size = (4 + 4 * segment_count + 7) & !7;
@@ -41,6 +51,12 @@ pub async fn read_message<S: AsyncStream + Unpin>(
         for i in 1..segment_count {
             let off = (i - 1) * 4;
             let len = u32::from_le_bytes(sizes[off..off + 4].try_into().expect("4 bytes")) as usize;
+            total_words = total_words.saturating_add(len);
+            if total_words > MAX_TOTAL_WORDS {
+                return Err(RpcError::Protocol(format!(
+                    "message too large: {total_words} words exceeds limit of {MAX_TOTAL_WORDS}"
+                )));
+            }
             builder.try_push_segment(len)?;
         }
     }
@@ -52,6 +68,10 @@ pub async fn read_message<S: AsyncStream + Unpin>(
         capnp::message::ReaderOptions::new(),
     ))
 }
+
+/// capnp-go's `defaultDecodeLimit` is 64 MiB; as words (8 bytes each) with
+/// one header word per segment this bounds a single message.
+const MAX_TOTAL_WORDS: usize = 8 * 1024 * 1024;
 
 /// Writes one Cap'n Proto message (including its segment table) to the stream.
 pub async fn write_message<S: AsyncStream + Unpin>(
