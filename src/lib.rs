@@ -26,3 +26,5 @@ pub use error::Error;
 pub use origin::{Body, HttpOrigin, HttpOriginDyn, Request, Response};
 pub use run::{RunOptions, default_config_json, run_quick_tunnel};
 pub use tunnel::{QuickTunnel, QuickTunnelOptions, create_quick_tunnel};
+#[cfg(test)]
+mod loopback_test;

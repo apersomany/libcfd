@@ -185,3 +185,50 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
         }
     }
 }
+
+/// A summary of an incoming RPC message, sufficient for a server to dispatch.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Incoming {
+    Bootstrap {
+        question_id: u32,
+    },
+    Call {
+        question_id: u32,
+        interface_id: u64,
+        method_id: u16,
+    },
+    Finish {
+        question_id: u32,
+    },
+    Release,
+    Other,
+}
+
+/// Reads and classifies the next RPC message on a stream without exposing
+/// Cap'n Proto types. Returns `None` when the stream ends.
+pub async fn read_incoming<S: AsyncStream + Unpin>(stream: &mut S) -> Result<Option<Incoming>> {
+    let reader = match read_message(stream).await {
+        Ok(r) => r,
+        Err(RpcError::Eof) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let root = reader.get_root::<rpc_capnp::message::Reader>()?;
+    match root.reborrow().which()? {
+        rpc_capnp::message::Bootstrap(b) => Ok(Some(Incoming::Bootstrap {
+            question_id: b?.get_question_id(),
+        })),
+        rpc_capnp::message::Call(c) => {
+            let c = c?;
+            Ok(Some(Incoming::Call {
+                question_id: c.reborrow().get_question_id(),
+                interface_id: c.reborrow().get_interface_id(),
+                method_id: c.reborrow().get_method_id(),
+            }))
+        }
+        rpc_capnp::message::Finish(f) => Ok(Some(Incoming::Finish {
+            question_id: f?.get_question_id(),
+        })),
+        rpc_capnp::message::Release(_) => Ok(Some(Incoming::Release)),
+        _ => Ok(Some(Incoming::Other)),
+    }
+}

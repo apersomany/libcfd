@@ -27,19 +27,34 @@ pub(crate) async fn serve_requests(
 ) -> Result<()> {
     let mut active = HashSet::new();
     active.insert(0);
+    let mut rx = conn.subscribe();
     loop {
-        let ids = conn.next_readable_streams().await?;
-        for id in ids {
-            if active.insert(id) {
-                let c = conn.clone();
-                let o = origin.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = serve_stream(c, o.as_ref(), id).await {
-                        tracing::debug!(stream = id, "request stream failed: {e}");
-                    }
-                });
+        let new_ids = {
+            let g = conn.inner.lock().unwrap();
+            if g.closed {
+                return Err(Error::Quic(
+                    g.close_reason
+                        .clone()
+                        .unwrap_or_else(|| "connection closed".into()),
+                ));
             }
+            g.conn
+                .readable()
+                .filter(|id| active.insert(*id))
+                .collect::<Vec<_>>()
+        };
+        for id in new_ids {
+            let c = conn.clone();
+            let o = origin.clone();
+            tokio::spawn(async move {
+                if let Err(e) = serve_stream(c, o.as_ref(), id).await {
+                    tracing::debug!(stream = id, "request stream failed: {e}");
+                }
+            });
         }
+        // Wait for the next connection event before rescanning, so idle
+        // connections do not spin.
+        let _ = rx.changed().await;
     }
 }
 

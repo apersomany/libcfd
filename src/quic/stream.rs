@@ -83,16 +83,16 @@ impl AsyncRead for QuicStream {
                     this.notify.notify_waiters();
                     return Poll::Ready(Ok(0));
                 }
-                Ok((n, _)) => {
+                Ok((n, fin)) => {
+                    if fin {
+                        this.read_eof = true;
+                    }
                     drop(g);
                     this.notify.notify_waiters();
                     return Poll::Ready(Ok(n));
                 }
                 Err(quiche::Error::Done) => {}
-                Err(quiche::Error::InvalidStreamState(_)) => {
-                    this.read_eof = true;
-                    return Poll::Ready(Ok(0));
-                }
+                Err(quiche::Error::InvalidStreamState(_)) => {}
                 Err(e) => return Poll::Ready(Err(stream_error(e))),
             }
             g.read_wakers.insert(this.stream_id, cx.waker().clone());
@@ -105,18 +105,17 @@ impl AsyncRead for QuicStream {
                     this.notify.notify_waiters();
                     return Poll::Ready(Ok(0));
                 }
-                Ok((n, _)) => {
+                Ok((n, fin)) => {
                     g.read_wakers.remove(&this.stream_id);
+                    if fin {
+                        this.read_eof = true;
+                    }
                     drop(g);
                     this.notify.notify_waiters();
                     return Poll::Ready(Ok(n));
                 }
                 Err(quiche::Error::Done) => {}
-                Err(quiche::Error::InvalidStreamState(_)) => {
-                    g.read_wakers.remove(&this.stream_id);
-                    this.read_eof = true;
-                    return Poll::Ready(Ok(0));
-                }
+                Err(quiche::Error::InvalidStreamState(_)) => {}
                 Err(e) => {
                     g.read_wakers.remove(&this.stream_id);
                     return Poll::Ready(Err(stream_error(e)));

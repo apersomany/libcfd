@@ -119,6 +119,21 @@ pub fn encode_connect_request(
     Ok(message)
 }
 
+/// Encodes a `ConnectRequest` as framed message bytes.
+pub fn encode_connect_request_bytes(request: &ConnectRequest) -> Result<Vec<u8>> {
+    let message = encode_connect_request(request)?;
+    Ok(capnp::serialize::write_message_to_words(&message))
+}
+
+/// Writes a `ConnectRequest` message to a stream (used by the mock edge).
+pub async fn write_connect_request<S: AsyncStream + Unpin>(
+    stream: &mut S,
+    request: &ConnectRequest,
+) -> Result<()> {
+    let message = encode_connect_request(request)?;
+    write_message(stream, &message).await
+}
+
 fn decode_connect_request_message<R: capnp::message::ReaderSegments>(
     reader: &capnp::message::Reader<R>,
 ) -> Result<ConnectRequest> {

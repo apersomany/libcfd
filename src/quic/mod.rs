@@ -28,19 +28,18 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 const STREAM_RECV_WINDOW: u64 = 6 * 1024 * 1024;
 const CONN_RECV_WINDOW: u64 = 30 * 1024 * 1024;
 const MAX_INCOMING_STREAMS: u64 = 1 << 60;
-
 pub(crate) struct Inner {
-    conn: quiche::Connection,
-    read_wakers: HashMap<u64, Waker>,
-    write_wakers: HashMap<u64, Waker>,
-    established: bool,
-    closed: bool,
-    close_reason: Option<String>,
+    pub(crate) conn: quiche::Connection,
+    pub(crate) read_wakers: HashMap<u64, Waker>,
+    pub(crate) write_wakers: HashMap<u64, Waker>,
+    pub(crate) established: bool,
+    pub(crate) closed: bool,
+    pub(crate) close_reason: Option<String>,
 }
 
 /// A QUIC connection to the edge.
 pub(crate) struct QuicConnection {
-    inner: Arc<Mutex<Inner>>,
+    pub(crate) inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
     seq_tx: watch::Sender<u64>,
 }
@@ -128,23 +127,9 @@ impl QuicConnection {
         QuicStream::new(self.inner.clone(), self.notify.clone(), stream_id)
     }
 
-    /// Waits for new readable stream ids, returning the currently-readable
-    /// set. The control stream (0) is included.
-    pub(crate) async fn next_readable_streams(&self) -> Result<Vec<u64>> {
-        let mut rx = self.seq_tx.subscribe();
-        loop {
-            let ids = {
-                let g = self.inner.lock().unwrap();
-                if g.closed {
-                    return Err(Error::Quic("connection closed".into()));
-                }
-                g.conn.readable().collect::<Vec<_>>()
-            };
-            if !ids.is_empty() {
-                return Ok(ids);
-            }
-            let _ = rx.changed().await;
-        }
+    /// Subscribes to connection events (new readable/writable streams, close).
+    pub(crate) fn subscribe(&self) -> watch::Receiver<u64> {
+        self.seq_tx.subscribe()
     }
 
     /// Gracefully closes the connection.
@@ -166,7 +151,7 @@ impl QuicConnection {
     }
 }
 
-async fn drive(
+pub(crate) async fn drive(
     socket: UdpSocket,
     inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
@@ -235,13 +220,12 @@ async fn drive(
         }
 
         if read_packets {
-            let from = socket
-                .peer_addr()
+            let to = socket
+                .local_addr()
                 .unwrap_or_else(|_| ([0, 0, 0, 0], 0).into());
-            let to = socket.local_addr().unwrap_or(from);
             loop {
-                match socket.try_recv(&mut recv_buf) {
-                    Ok(len) => {
+                match socket.try_recv_from(&mut recv_buf) {
+                    Ok((len, from)) => {
                         let recv_info = quiche::RecvInfo { to, from };
                         let mut g = inner.lock().unwrap();
                         if let Err(e) = g.conn.recv(&mut recv_buf[..len], recv_info) {
