@@ -23,14 +23,14 @@ use tokio::net::TcpStream;
 use crate::control::{self, RegistrationOptions};
 use crate::error::{Error, Result};
 use crate::event::Event;
-use crate::origin::{Body, Origin, Request, Response};
+use crate::origin::{Body, Origin, Request, Response, pump};
 use crate::roots;
-use crate::serve::pump;
 use crate::tunnel::Tunnel;
 
+pub(crate) use crate::origin::websocket_accept;
 pub(crate) use headers::{
     CONFIGURATION_UPDATE, CONTROL_STREAM_UPGRADE, INTERNAL_TCP_SRC_HEADER, INTERNAL_UPGRADE_HEADER,
-    WEBSOCKET_UPGRADE, encode_response_headers, websocket_accept,
+    WEBSOCKET_UPGRADE, encode_response_headers,
 };
 pub(crate) use stream::{H2Bidi, RecvStreamReader, SendStreamWriter};
 

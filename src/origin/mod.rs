@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use futures_util::io::{self, AsyncRead, AsyncWrite};
+use futures_util::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::error::Result;
 
@@ -142,6 +142,7 @@ impl<T: TcpOrigin> TcpOriginDyn for T {
 /// Every run needs an [`HttpOrigin`]; websocket and TCP handlers are
 /// optional and enabled with [`Origin::with_websocket`] and
 /// [`Origin::with_tcp`].
+#[cfg_attr(not(any(feature = "quic-edge", feature = "h2-edge")), allow(dead_code))]
 pub struct Origin {
     pub(crate) http: Arc<dyn HttpOriginDyn>,
     pub(crate) websocket: Option<Arc<dyn WebSocketOriginDyn>>,
@@ -300,6 +301,82 @@ impl std::fmt::Debug for Body {
     }
 }
 
+/// Computes the RFC 6455 `Sec-Websocket-Accept` value for a challenge key.
+#[cfg_attr(not(feature = "h2-edge"), allow(dead_code))]
+pub(crate) fn websocket_accept(challenge_key: &str) -> String {
+    use base64::Engine as _;
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(challenge_key.as_bytes());
+    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+}
+
+/// Pumps bytes in both directions between an origin duplex and the edge
+/// stream until both directions reach the end.
+///
+/// Mirrors cloudflared's `PipeBidirectional`: each direction closes only
+/// its own destination write side when the source ends, and the other
+/// direction keeps pumping until it ends as well.
+#[cfg_attr(not(any(feature = "quic-edge", feature = "h2-edge")), allow(dead_code))]
+pub(crate) async fn pump<R, W>(origin: Duplex, edge_read: R, edge_write: W) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let (mut origin_read, mut origin_write) = origin.into_parts();
+    let mut edge_read = edge_read;
+    let mut edge_write = edge_write;
+    let mut edge_done = false;
+    let mut origin_done = false;
+    let mut e_buf = [0u8; 8192];
+    let mut o_buf = [0u8; 8192];
+    loop {
+        if edge_done && origin_done {
+            break;
+        }
+        tokio::select! {
+            read = edge_read.read(&mut e_buf), if !edge_done => {
+                match read {
+                    Ok(0) => {
+                        edge_done = true;
+                        let _ = origin_write.close().await;
+                    }
+                    Ok(n) => {
+                        if let Err(e) = origin_write.write_all(&e_buf[..n]).await {
+                            tracing::debug!("origin write failed: {e}");
+                            edge_done = true;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("edge read failed: {e}");
+                        edge_done = true;
+                    }
+                }
+            }
+            read = origin_read.read(&mut o_buf), if !origin_done => {
+                match read {
+                    Ok(0) => {
+                        origin_done = true;
+                        let _ = edge_write.close().await;
+                    }
+                    Ok(n) => {
+                        if let Err(e) = edge_write.write_all(&o_buf[..n]).await {
+                            tracing::debug!("edge write failed: {e}");
+                            origin_done = true;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("origin read failed: {e}");
+                        origin_done = true;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Handles HTTP requests from the edge.
 ///
 /// Implementations must be `Send + Sync` so requests can be handled
@@ -333,5 +410,16 @@ where
 {
     fn handle(&self, request: Request) -> impl Future<Output = Result<Response>> + Send + '_ {
         (self)(request)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computes_websocket_accept() {
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        assert_eq!(websocket_accept(key), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
     }
 }

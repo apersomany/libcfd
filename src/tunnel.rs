@@ -1,14 +1,18 @@
 //! Tunnel identities: quick tunnels and named tunnels.
 
+#[cfg(feature = "named-tunnel")]
 use std::path::Path;
+#[cfg(feature = "quick-tunnel")]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "quick-tunnel")]
 use crate::api;
 use crate::error::{Error, Result};
 
 /// Default quick tunnel service (trycloudflare.com).
+#[cfg(feature = "quick-tunnel")]
 pub const DEFAULT_QUICK_SERVICE_URL: &str = "https://api.trycloudflare.com";
 
 /// A tunnel identity, containing everything an edge connection needs to
@@ -20,15 +24,19 @@ pub const DEFAULT_QUICK_SERVICE_URL: &str = "https://api.trycloudflare.com";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Tunnel {
+    #[cfg(feature = "quick-tunnel")]
     Quick(QuickTunnel),
+    #[cfg(feature = "named-tunnel")]
     Named(NamedTunnel),
 }
 
 impl Tunnel {
+    #[cfg(feature = "quick-tunnel")]
     pub fn quick(tunnel: QuickTunnel) -> Self {
         Self::Quick(tunnel)
     }
 
+    #[cfg(feature = "named-tunnel")]
     pub fn named(tunnel: NamedTunnel) -> Self {
         Self::Named(tunnel)
     }
@@ -36,7 +44,9 @@ impl Tunnel {
     /// The account tag that owns the tunnel.
     pub fn account_tag(&self) -> &str {
         match self {
+            #[cfg(feature = "quick-tunnel")]
             Self::Quick(t) => &t.account_tag,
+            #[cfg(feature = "named-tunnel")]
             Self::Named(t) => &t.account_tag,
         }
     }
@@ -44,7 +54,9 @@ impl Tunnel {
     /// The tunnel secret used to prove ownership at registration.
     pub fn tunnel_secret(&self) -> &[u8] {
         match self {
+            #[cfg(feature = "quick-tunnel")]
             Self::Quick(t) => &t.secret,
+            #[cfg(feature = "named-tunnel")]
             Self::Named(t) => &t.tunnel_secret,
         }
     }
@@ -52,7 +64,9 @@ impl Tunnel {
     /// The tunnel id as a UUID string.
     pub fn tunnel_id(&self) -> &str {
         match self {
+            #[cfg(feature = "quick-tunnel")]
             Self::Quick(t) => &t.tunnel_id,
+            #[cfg(feature = "named-tunnel")]
             Self::Named(t) => &t.tunnel_id,
         }
     }
@@ -63,9 +77,11 @@ impl Tunnel {
     }
 
     /// The public hostname of a quick tunnel, when this is one.
+    #[cfg(feature = "quick-tunnel")]
     pub fn hostname(&self) -> Option<&str> {
         match self {
             Self::Quick(t) => Some(&t.hostname),
+            #[cfg(feature = "named-tunnel")]
             Self::Named(_) => None,
         }
     }
@@ -74,13 +90,16 @@ impl Tunnel {
     /// (named tunnels can pin an `Endpoint` that acts as the region).
     pub(crate) fn region_override(&self) -> Option<String> {
         match self {
+            #[cfg(feature = "named-tunnel")]
             Self::Named(t) => t.endpoint.clone(),
+            #[cfg(feature = "quick-tunnel")]
             Self::Quick(_) => None,
         }
     }
 }
 
 /// Options for [`create_quick_tunnel`].
+#[cfg(feature = "quick-tunnel")]
 #[derive(Debug, Clone)]
 pub struct QuickTunnelOptions {
     /// Base URL of the quick tunnel service. Defaults to
@@ -90,6 +109,7 @@ pub struct QuickTunnelOptions {
     pub http_timeout: Duration,
 }
 
+#[cfg(feature = "quick-tunnel")]
 impl Default for QuickTunnelOptions {
     fn default() -> Self {
         Self {
@@ -103,6 +123,7 @@ impl Default for QuickTunnelOptions {
 ///
 /// The hostname is the public URL; the account tag, tunnel id and secret are
 /// the credentials used to register with the edge.
+#[cfg(feature = "quick-tunnel")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuickTunnel {
     pub tunnel_id: String,
@@ -113,6 +134,7 @@ pub struct QuickTunnel {
     pub secret: Vec<u8>,
 }
 
+#[cfg(feature = "quick-tunnel")]
 impl QuickTunnel {
     /// The public URL of the quick tunnel.
     pub fn url(&self) -> String {
@@ -134,6 +156,7 @@ impl QuickTunnel {
 /// The Serde layout matches cloudflared's credentials file exactly:
 /// `AccountTag`, `TunnelSecret` (standard base64) and `TunnelID` (a UUID
 /// string), with an optional `Endpoint` region override.
+#[cfg(feature = "named-tunnel")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NamedTunnel {
     #[serde(rename = "AccountTag")]
@@ -146,6 +169,7 @@ pub struct NamedTunnel {
     pub endpoint: Option<String>,
 }
 
+#[cfg(feature = "named-tunnel")]
 impl NamedTunnel {
     /// Loads tunnel credentials from a cloudflared credentials file.
     pub fn from_credentials_file(path: impl AsRef<Path>) -> Result<NamedTunnel> {
@@ -196,6 +220,7 @@ mod secret_codec {
     }
 }
 
+#[cfg(feature = "quick-tunnel")]
 #[derive(Debug, Deserialize)]
 struct QuickTunnelResponse {
     #[serde(default)]
@@ -206,6 +231,7 @@ struct QuickTunnelResponse {
     errors: Vec<QuickTunnelError>,
 }
 
+#[cfg(feature = "quick-tunnel")]
 #[derive(Debug, Deserialize)]
 struct QuickTunnelResult {
     #[serde(default)]
@@ -221,6 +247,7 @@ struct QuickTunnelResult {
     secret: Vec<u8>,
 }
 
+#[cfg(feature = "quick-tunnel")]
 #[derive(Debug, Deserialize)]
 struct QuickTunnelError {
     #[serde(default)]
@@ -233,6 +260,7 @@ struct QuickTunnelError {
 ///
 /// This mirrors `cloudflared tunnel --url` with no account: the service
 /// assigns the tunnel and returns its credentials.
+#[cfg(feature = "quick-tunnel")]
 pub async fn create_quick_tunnel(options: &QuickTunnelOptions) -> Result<QuickTunnel> {
     let url = format!("{}/tunnel", options.service_url.trim_end_matches('/'));
     let headers = vec![(
@@ -277,6 +305,7 @@ pub async fn create_quick_tunnel(options: &QuickTunnelOptions) -> Result<QuickTu
 mod tests {
     use super::*;
 
+    #[cfg(feature = "quick-tunnel")]
     fn quick() -> QuickTunnel {
         QuickTunnel {
             tunnel_id: "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f".into(),
@@ -287,12 +316,14 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "quick-tunnel")]
     #[test]
     fn quick_tunnel_url_prepends_scheme() {
         let t = quick();
         assert_eq!(t.url(), "https://abc.trycloudflare.com");
     }
 
+    #[cfg(feature = "quick-tunnel")]
     #[test]
     fn quick_tunnel_url_keeps_scheme() {
         let mut t = quick();
@@ -300,6 +331,7 @@ mod tests {
         assert_eq!(t.url(), "https://abc.trycloudflare.com");
     }
 
+    #[cfg(feature = "quick-tunnel")]
     #[test]
     fn parses_api_response() {
         let body = br#"{"success":true,"result":{"id":"6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f","name":"","hostname":"random.trycloudflare.com","account_tag":"abc123","secret":"c2VjcmV0"}}"#;
@@ -311,6 +343,7 @@ mod tests {
         assert_eq!(r.secret, b"secret");
     }
 
+    #[cfg(feature = "quick-tunnel")]
     #[test]
     fn parses_api_error() {
         let body = br#"{"success":false,"errors":[{"code":10000,"message":"nope"}]}"#;
@@ -319,6 +352,7 @@ mod tests {
         assert_eq!(data.errors[0].message, "nope");
     }
 
+    #[cfg(feature = "named-tunnel")]
     #[test]
     fn named_tunnel_credentials_round_trip() {
         let tunnel = NamedTunnel {
@@ -342,6 +376,7 @@ mod tests {
         assert_eq!(back.tunnel_id, "550e8400-e29b-41d4-a716-446655440000");
     }
 
+    #[cfg(feature = "quick-tunnel")]
     #[test]
     fn tunnel_enum_round_trip() {
         let tunnel = Tunnel::quick(quick());
@@ -352,6 +387,7 @@ mod tests {
         assert_eq!(back.tunnel_id(), "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f");
     }
 
+    #[cfg(feature = "quick-tunnel")]
     #[test]
     fn tunnel_id_bytes_parse() {
         let tunnel = Tunnel::quick(quick());

@@ -119,15 +119,6 @@ fn is_websocket_client_header(name: &str) -> bool {
     matches!(name, "sec-websocket-accept" | "connection" | "upgrade")
 }
 
-/// Computes the RFC 6455 `Sec-Websocket-Accept` value for a challenge key.
-pub(crate) fn websocket_accept(challenge_key: &str) -> String {
-    use sha1::{Digest, Sha1};
-    let mut hasher = Sha1::new();
-    hasher.update(challenge_key.as_bytes());
-    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +175,9 @@ mod tests {
     #[test]
     fn computes_websocket_accept() {
         let key = "dGhlIHNhbXBsZSBub25jZQ==";
-        assert_eq!(websocket_accept(key), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+        assert_eq!(
+            crate::origin::websocket_accept(key),
+            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+        );
     }
 }

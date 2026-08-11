@@ -6,6 +6,17 @@ name = "libcfd"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["quick-tunnel", "named-tunnel", "quic-edge", "h2-edge"]
+# Quick Tunnel support: the trycloudflare.com HTTP API client and `QuickTunnel`.
+quick-tunnel = []
+# Named Tunnel support: `NamedTunnel` and the credentials-file loader.
+named-tunnel = []
+# QUIC edge transport (quiche).
+quic-edge = []
+# HTTP/2 edge transport.
+h2-edge = []
+
 [dependencies]
 base64 = "0.23.1"
 boring = "4.22"
@@ -22,7 +33,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha1 = "0.11.0"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["net", "rt", "rt-multi-thread", "time", "io-util", "sync", "macros", "fs", "signal"] }
+tokio = { version = "1.53.1", features = ["net", "rt", "rt-multi-thread", "time", "io-util", "sync", "macros", "fs"] }
 tokio-rustls = "0.26.4"
 tracing = "0.1.44"
 uuid = { version = "1.24.0", default-features = false }
@@ -30,5 +41,22 @@ webpki-roots = "1.0.9"
 
 [dev-dependencies]
 rcgen = "0.14.9"
+tokio = { version = "1.53.1", features = ["signal"] }
 tokio-util = { version = "0.7.19", features = ["compat"] }
 tracing-subscriber = "0.3.23"
+
+[[example]]
+name = "quick_tunnel"
+required-features = ["quick-tunnel", "quic-edge"]
+
+[[example]]
+name = "h2_tunnel"
+required-features = ["quick-tunnel", "h2-edge"]
+
+[[example]]
+name = "named_tunnel"
+required-features = ["named-tunnel"]
+
+[[example]]
+name = "origin_ws_tcp"
+required-features = ["quick-tunnel", "quic-edge"]

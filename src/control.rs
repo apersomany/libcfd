@@ -8,6 +8,7 @@ use libcfd_rpc::tunnel::{
 };
 
 use crate::error::{Error, Result};
+#[cfg(feature = "quic-edge")]
 use crate::quic::{QuicConnection, QuicStream};
 use crate::tunnel::Tunnel;
 
@@ -78,6 +79,7 @@ fn connector_client_id() -> &'static [u8; 16] {
 ///
 /// Returns the registration details and the still-open client so the caller
 /// can unregister later.
+#[cfg(feature = "quic-edge")]
 pub(crate) async fn register(
     conn: &QuicConnection,
     tunnel: &Tunnel,

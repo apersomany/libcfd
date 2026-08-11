@@ -4,24 +4,38 @@
 
 #![cfg(test)]
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(feature = "quic-edge")]
+use std::sync::Mutex;
 use std::time::Duration;
 
+#[cfg(feature = "quic-edge")]
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use libcfd_rpc::Incoming;
+#[cfg(feature = "quic-edge")]
 use libcfd_rpc::quic::{
     ConnectRequest, ConnectResponse, ConnectionType, DATA_STREAM_PROTOCOL_SIGNATURE, PROTOCOL_V1,
     read_connect_response, write_connect_request,
 };
+#[cfg(feature = "quic-edge")]
 use tokio::net::UdpSocket;
-use tokio::sync::{Notify, watch};
+use tokio::sync::Notify;
+#[cfg(feature = "quic-edge")]
+use tokio::sync::watch;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-use crate::control::{self, RegistrationOptions};
-use crate::error::{Error, Result};
+use crate::control::RegistrationOptions;
+#[cfg(feature = "quic-edge")]
+use crate::control::{self};
+#[cfg(feature = "quic-edge")]
+use crate::error::Error;
+use crate::error::Result;
+#[cfg(feature = "h2-edge")]
 use crate::event::Event;
 use crate::origin::{Body, Origin, Request, Response};
+#[cfg(feature = "quic-edge")]
 use crate::quic::{Inner, QuicConnection, QuicStream, drive};
+#[cfg(feature = "quic-edge")]
 use crate::serve;
 use crate::tunnel::{QuickTunnel, Tunnel};
 
@@ -48,12 +62,14 @@ fn make_tunnel() -> QuickTunnel {
 }
 
 /// A quiche server that plays the edge role on a loopback socket.
+#[cfg(feature = "quic-edge")]
 struct MockEdge {
     inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
     seq_tx: watch::Sender<u64>,
 }
 
+#[cfg(feature = "quic-edge")]
 impl MockEdge {
     /// Binds the loopback socket and spawns the accept+driver task. Returns
     /// the address the client should dial and a handle to the edge once the
@@ -230,6 +246,7 @@ impl MockEdge {
     }
 }
 
+#[cfg(feature = "quic-edge")]
 #[tokio::test(flavor = "multi_thread")]
 async fn quic_tunnel_end_to_end() {
     let certified = rcgen::generate_simple_self_signed(vec![
@@ -319,10 +336,12 @@ async fn quic_tunnel_end_to_end() {
 
 /// A websocket origin that answers with 101 and echoes the raw stream
 /// through a loopback TCP connection to `addr`.
+#[cfg(feature = "quic-edge")]
 struct EchoWsOrigin {
     addr: std::net::SocketAddr,
 }
 
+#[cfg(feature = "quic-edge")]
 impl crate::origin::WebSocketOrigin for EchoWsOrigin {
     async fn connect(&self, request: Request) -> Result<crate::origin::WebSocketConnection> {
         let sock = tokio::net::TcpStream::connect(self.addr).await?;
@@ -335,7 +354,7 @@ impl crate::origin::WebSocketOrigin for EchoWsOrigin {
             .unwrap_or("");
         headers.insert(
             "Sec-WebSocket-Accept",
-            http::HeaderValue::from_str(&crate::h2::websocket_accept(key)).unwrap(),
+            http::HeaderValue::from_str(&crate::origin::websocket_accept(key)).unwrap(),
         );
         Ok(crate::origin::WebSocketConnection {
             response: Response::new(
@@ -349,10 +368,12 @@ impl crate::origin::WebSocketOrigin for EchoWsOrigin {
 }
 
 /// A TCP origin that echoes the raw stream through a loopback connection.
+#[cfg(feature = "quic-edge")]
 struct EchoTcpOrigin {
     addr: std::net::SocketAddr,
 }
 
+#[cfg(feature = "quic-edge")]
 impl crate::origin::TcpOrigin for EchoTcpOrigin {
     async fn connect(&self, _request: Request) -> Result<crate::origin::Duplex> {
         let sock = tokio::net::TcpStream::connect(self.addr).await?;
@@ -361,6 +382,7 @@ impl crate::origin::TcpOrigin for EchoTcpOrigin {
     }
 }
 
+#[cfg(feature = "quic-edge")]
 async fn echo_server() -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -379,6 +401,7 @@ async fn echo_server() -> std::net::SocketAddr {
     addr
 }
 
+#[cfg(feature = "quic-edge")]
 #[tokio::test(flavor = "multi_thread")]
 async fn quic_websocket_tcp_round_trip() {
     let certified = rcgen::generate_simple_self_signed(vec![
@@ -483,6 +506,7 @@ async fn quic_websocket_tcp_round_trip() {
     conn.close();
 }
 
+#[cfg(feature = "h2-edge")]
 #[tokio::test(flavor = "multi_thread")]
 async fn h2_tunnel_end_to_end() {
     use bytes::Bytes;
@@ -670,6 +694,7 @@ async fn h2_tunnel_end_to_end() {
 /// A duplex that echoes everything written to it back to its reader, then
 /// closes once the write half is closed. Self-terminating so the response
 /// side of a websocket/TCP exchange can end.
+#[cfg(feature = "h2-edge")]
 fn duplex_echo() -> crate::origin::Duplex {
     let (lib_read, mut echo_write) = tokio::io::duplex(16384);
     let (mut echo_read, lib_write) = tokio::io::duplex(16384);
@@ -679,8 +704,10 @@ fn duplex_echo() -> crate::origin::Duplex {
     crate::origin::Duplex::new(lib_read.compat(), lib_write.compat_write())
 }
 
+#[cfg(feature = "h2-edge")]
 struct OneShotWsOrigin;
 
+#[cfg(feature = "h2-edge")]
 impl crate::origin::WebSocketOrigin for OneShotWsOrigin {
     async fn connect(&self, request: Request) -> Result<crate::origin::WebSocketConnection> {
         let mut headers = http::HeaderMap::new();
@@ -691,7 +718,7 @@ impl crate::origin::WebSocketOrigin for OneShotWsOrigin {
             .unwrap_or("");
         headers.insert(
             "Sec-WebSocket-Accept",
-            http::HeaderValue::from_str(&crate::h2::websocket_accept(key)).unwrap(),
+            http::HeaderValue::from_str(&crate::origin::websocket_accept(key)).unwrap(),
         );
         Ok(crate::origin::WebSocketConnection {
             response: Response::new(
@@ -704,14 +731,17 @@ impl crate::origin::WebSocketOrigin for OneShotWsOrigin {
     }
 }
 
+#[cfg(feature = "h2-edge")]
 struct OneShotTcpOrigin;
 
+#[cfg(feature = "h2-edge")]
 impl crate::origin::TcpOrigin for OneShotTcpOrigin {
     async fn connect(&self, _request: Request) -> Result<crate::origin::Duplex> {
         Ok(duplex_echo())
     }
 }
 
+#[cfg(feature = "h2-edge")]
 #[tokio::test(flavor = "multi_thread")]
 async fn h2_websocket_tcp_round_trip() {
     use bytes::Bytes;

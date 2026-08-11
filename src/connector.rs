@@ -1,19 +1,25 @@
 //! EdgeConnector: edge discovery, connection establishment, retries, and
 //! transport selection.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "h2-edge")]
 use tokio::sync::Notify;
+
+#[cfg(feature = "quic-edge")]
+use std::net::SocketAddr;
 
 use crate::control::{self, RegistrationOptions};
 use crate::edge::{self, EdgeAddr};
 use crate::error::{Error, Result};
 use crate::event::Event;
+#[cfg(feature = "h2-edge")]
 use crate::h2::{H2EdgeConnection, H2Shared};
 use crate::origin::Origin;
+#[cfg(feature = "quic-edge")]
 use crate::quic::QuicConnection;
+#[cfg(feature = "quic-edge")]
 use crate::serve;
 use crate::tunnel::Tunnel;
 
@@ -21,10 +27,13 @@ use crate::tunnel::Tunnel;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     /// QUIC only.
+    #[cfg(feature = "quic-edge")]
     Quic,
     /// HTTP/2 only.
+    #[cfg(feature = "h2-edge")]
     H2,
     /// Start with QUIC and fall back to HTTP/2 after repeated QUIC failures.
+    #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
     Auto,
 }
 
@@ -57,7 +66,7 @@ pub struct EdgeOptions {
 impl Default for EdgeOptions {
     fn default() -> Self {
         Self {
-            transport: Transport::Auto,
+            transport: default_transport(),
             region: None,
             ca_cert_pem: None,
             config_json: default_config_json().into(),
@@ -67,6 +76,23 @@ impl Default for EdgeOptions {
             max_quic_failures: 5,
         }
     }
+}
+
+/// The default transport depends on which edge transports are enabled: auto
+/// when both are, otherwise the only enabled one.
+#[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+fn default_transport() -> Transport {
+    Transport::Auto
+}
+
+#[cfg(all(feature = "quic-edge", not(feature = "h2-edge")))]
+fn default_transport() -> Transport {
+    Transport::Quic
+}
+
+#[cfg(all(not(feature = "quic-edge"), feature = "h2-edge"))]
+fn default_transport() -> Transport {
+    Transport::H2
 }
 
 /// The default local configuration payload, matching the shape cloudflared
@@ -130,7 +156,10 @@ impl EdgeConnector {
         });
         let tunnel = Arc::new(tunnel);
         let origin = Arc::new(origin);
+        #[cfg(feature = "quic-edge")]
         let mut quic_failures: u8 = 0;
+        #[cfg(not(feature = "quic-edge"))]
+        let quic_failures: u8 = 0;
         let mut attempt: u32 = 0;
 
         loop {
@@ -163,7 +192,10 @@ impl EdgeConnector {
                     continue;
                 }
             };
+            #[cfg(feature = "quic-edge")]
             let mut quic_broken = false;
+            #[cfg(not(feature = "quic-edge"))]
+            let _quic_broken = false;
             for edge in &edges {
                 let attempt_result = tokio::select! {
                     _ = shutdown_flag.notified() => return Ok(()),
@@ -182,6 +214,8 @@ impl EdgeConnector {
                     registered_at,
                     quic_timed_out,
                 } = attempt_result;
+                #[cfg(not(feature = "quic-edge"))]
+                let _ = quic_timed_out;
                 match result {
                     Ok(()) => return Ok(()),
                     Err(Error::DuplicateConnection(_)) => {
@@ -193,6 +227,7 @@ impl EdgeConnector {
                         tracing::warn!(addr = %edge.addr, ?transport, "edge connection failed: {e}");
                     }
                 }
+                #[cfg(feature = "quic-edge")]
                 if quic_timed_out && transport == Transport::Quic {
                     quic_broken = true;
                 }
@@ -203,6 +238,7 @@ impl EdgeConnector {
                     tracing::debug!("reconnect backoff reset after a healthy connection period");
                 }
             }
+            #[cfg(feature = "quic-edge")]
             if transport == Transport::Quic {
                 if quic_broken {
                     // An idle-timeout QUIC failure falls back immediately
@@ -226,10 +262,15 @@ impl EdgeConnector {
 }
 
 /// Applies the transport selection policy after `quic_failures` failures.
+#[cfg(feature = "quic-edge")]
+#[cfg_attr(not(feature = "h2-edge"), allow(unused_variables))]
 fn select_transport(requested: Transport, quic_failures: u8, max_quic_failures: u8) -> Transport {
     match requested {
+        #[cfg(feature = "quic-edge")]
         Transport::Quic => Transport::Quic,
+        #[cfg(feature = "h2-edge")]
         Transport::H2 => Transport::H2,
+        #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
         Transport::Auto => {
             if quic_failures >= max_quic_failures {
                 Transport::H2
@@ -237,6 +278,14 @@ fn select_transport(requested: Transport, quic_failures: u8, max_quic_failures: 
                 Transport::Quic
             }
         }
+    }
+}
+
+/// Without QUIC there is only the HTTP/2 transport to select.
+#[cfg(not(feature = "quic-edge"))]
+fn select_transport(requested: Transport, _quic_failures: u8, _max_quic_failures: u8) -> Transport {
+    match requested {
+        Transport::H2 => Transport::H2,
     }
 }
 
@@ -266,12 +315,16 @@ async fn connect_and_serve(
     attempt: u32,
 ) -> ServeAttempt {
     match transport {
+        #[cfg(feature = "quic-edge")]
         Transport::Quic => run_on_edge_quic(tunnel, origin, edge, options, shutdown, attempt).await,
+        #[cfg(feature = "h2-edge")]
         Transport::H2 => run_on_edge_h2(tunnel, origin, edge, options, shutdown, attempt).await,
+        #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
         Transport::Auto => unreachable!("transport selection resolves auto before connecting"),
     }
 }
 
+#[cfg(feature = "quic-edge")]
 async fn run_on_edge_quic(
     tunnel: &Arc<Tunnel>,
     origin: &Arc<Origin>,
@@ -341,6 +394,7 @@ async fn run_on_edge_quic(
     }
 }
 
+#[cfg(feature = "h2-edge")]
 async fn run_on_edge_h2(
     tunnel: &Arc<Tunnel>,
     origin: &Arc<Origin>,
@@ -438,6 +492,7 @@ async fn run_on_edge_h2(
     }
 }
 
+#[cfg(feature = "quic-edge")]
 fn peer_ip_bytes(addr: &SocketAddr) -> Vec<u8> {
     match addr.ip() {
         std::net::IpAddr::V4(ip) => ip.octets().to_vec(),
@@ -449,11 +504,13 @@ fn peer_ip_bytes(addr: &SocketAddr) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "quic-edge")]
     #[test]
     fn quic_only_transport_never_falls_back() {
         assert_eq!(select_transport(Transport::Quic, 100, 5), Transport::Quic);
     }
 
+    #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
     #[test]
     fn auto_falls_back_after_max_failures() {
         assert_eq!(select_transport(Transport::Auto, 0, 5), Transport::Quic);
@@ -462,9 +519,28 @@ mod tests {
         assert_eq!(select_transport(Transport::Auto, 9, 5), Transport::H2);
     }
 
+    #[cfg(feature = "h2-edge")]
     #[test]
     fn h2_stays_h2() {
         assert_eq!(select_transport(Transport::H2, 0, 5), Transport::H2);
+    }
+
+    #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+    #[test]
+    fn default_transport_is_auto_when_both_edges_enabled() {
+        assert_eq!(EdgeOptions::default().transport, Transport::Auto);
+    }
+
+    #[cfg(all(feature = "quic-edge", not(feature = "h2-edge")))]
+    #[test]
+    fn default_transport_is_quic_without_h2() {
+        assert_eq!(EdgeOptions::default().transport, Transport::Quic);
+    }
+
+    #[cfg(all(not(feature = "quic-edge"), feature = "h2-edge"))]
+    #[test]
+    fn default_transport_is_h2_without_quic() {
+        assert_eq!(EdgeOptions::default().transport, Transport::H2);
     }
 
     #[test]

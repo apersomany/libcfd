@@ -78,6 +78,7 @@ impl Error {
     /// Whether retrying this error is pointless (the edge will keep
     /// rejecting the tunnel), mirroring cloudflared's permanent-vs-retryable
     /// registration split.
+    #[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
     pub(crate) fn is_permanent(&self) -> bool {
         matches!(
             self,
