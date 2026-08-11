@@ -13,6 +13,9 @@ use futures_util::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt}
 
 use crate::error::Result;
 
+#[cfg(feature = "axum-origin")]
+pub mod axum;
+
 /// A read-only half of a [`Duplex`].
 pub type ReadHalf = Pin<Box<dyn AsyncRead + Send>>;
 /// A write-only half of a [`Duplex`].

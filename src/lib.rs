@@ -66,6 +66,8 @@ mod tunnel;
 #[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
 pub use connector::{EdgeConnector, EdgeOptions, Transport, default_config_json};
 pub use error::Error;
+#[cfg(feature = "axum-origin")]
+pub use origin::axum::AxumOrigin;
 pub use origin::{
     Body, Duplex, HttpOrigin, HttpOriginDyn, Origin, ReadHalf, Request, Response, TcpOrigin,
     TcpOriginDyn, WebSocketConnection, WebSocketOrigin, WebSocketOriginDyn, WriteHalf,

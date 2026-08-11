@@ -117,6 +117,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
     #[test]
     fn registration_failure_classifies_permanent() {
         let retryable = libcfd_rpc::tunnel::RegistrationFailure::Retryable {

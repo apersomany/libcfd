@@ -16,8 +16,11 @@ named-tunnel = []
 quic-edge = []
 # HTTP/2 edge transport.
 h2-edge = []
+# Adapter letting an axum Router serve as an HttpOrigin (HTTP only; see docs).
+axum-origin = ["dep:axum", "dep:tower"]
 
 [dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "query"], optional = true }
 base64 = "0.23.1"
 boring = "4.22"
 bytes = "1.12.1"
@@ -35,6 +38,7 @@ sha1 = "0.11.0"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["net", "rt", "rt-multi-thread", "time", "io-util", "sync", "macros", "fs"] }
 tokio-rustls = "0.26.4"
+tower = { version = "0.5.3", optional = true }
 tracing = "0.1.44"
 uuid = { version = "1.24.0", default-features = false }
 webpki-roots = "1.0.9"
@@ -60,3 +64,7 @@ required-features = ["named-tunnel"]
 [[example]]
 name = "origin_ws_tcp"
 required-features = ["quick-tunnel", "quic-edge"]
+
+[[example]]
+name = "axum_tunnel"
+required-features = ["quick-tunnel", "quic-edge", "axum-origin"]
