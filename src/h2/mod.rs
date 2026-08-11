@@ -55,6 +55,8 @@ pub(crate) struct H2Shared {
 /// An HTTP/2 connection to the edge.
 pub(crate) struct H2EdgeConnection {
     conn: h2::server::Connection<TlsStream, Bytes>,
+    /// The local socket IP (4 or 16 bytes), sent as `originLocalIp`.
+    pub(crate) local_ip: Vec<u8>,
 }
 
 impl H2EdgeConnection {
@@ -85,7 +87,13 @@ impl H2EdgeConnection {
             .handshake(tls)
             .await
             .map_err(|e| Error::H2(format!("http2 handshake failed: {e}")))?;
-        Ok((H2EdgeConnection { conn }, local_ip))
+        Ok((
+            H2EdgeConnection {
+                conn,
+                local_ip: local_ip.clone(),
+            },
+            local_ip,
+        ))
     }
 
     /// Serves the connection until the edge closes it or shutdown fires:
