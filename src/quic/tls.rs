@@ -7,7 +7,7 @@
 use boring::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
 use boring::x509::X509;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 const SYSTEM_CA_PATHS: &[&str] = &[
     "/etc/ssl/certs/ca-certificates.crt",
@@ -57,5 +57,12 @@ fn system_roots() -> Vec<Vec<u8>> {
     Vec::new()
 }
 
-#[allow(dead_code)]
-fn _assert_error_conversion(_: Error) {}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bundled_cloudflare_roots_parse() {
+        let pem = include_bytes!("cloudflare_origin_ca.pem");
+        let certs = boring::x509::X509::stack_from_pem(pem).expect("bundled roots are valid pem");
+        assert_eq!(certs.len(), 3);
+    }
+}
