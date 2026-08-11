@@ -73,14 +73,13 @@ pub async fn read_message<S: AsyncStream + Unpin>(
 /// one header word per segment this bounds a single message.
 const MAX_TOTAL_WORDS: usize = 8 * 1024 * 1024;
 
-/// Writes one Cap'n Proto message (including its segment table) to the stream.
-pub async fn write_message<S: AsyncStream + Unpin>(
-    stream: &mut S,
+/// Serializes a Cap'n Proto message (including its segment table) to framed
+/// bytes. Synchronous so no non-`Send` capnp builder state is held across an
+/// await; write the result with [`write_raw`].
+pub fn serialize_message(
     message: &capnp::message::Builder<capnp::message::HeapAllocator>,
-) -> Result<()> {
-    let bytes = capnp::serialize::write_message_to_words(message);
-    write_all(stream, &bytes).await?;
-    Ok(())
+) -> Vec<u8> {
+    capnp::serialize::write_message_to_words(message)
 }
 
 /// Writes already-framed bytes (as produced by `serialize::write_message_to_words`)

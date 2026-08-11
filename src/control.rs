@@ -1,19 +1,46 @@
 //! Control stream handling: registration, configuration push, unregister.
 
-use libcfd_rpc::RpcClient;
+use std::time::Duration;
+
+use libcfd_rpc::AsyncStream;
 use libcfd_rpc::tunnel::{
     ClientInfo, ConnectionOptions, ConnectionResponse, TunnelAuth, TunnelClient,
 };
 
 use crate::error::{Error, Result};
 use crate::quic::{QuicConnection, QuicStream};
-use crate::tunnel::QuickTunnel;
+use crate::tunnel::Tunnel;
+
+/// The duplicate-connection marker the edge returns, mirroring
+/// cloudflared's `DuplicateConnectionError`.
+pub(crate) const DUPLICATE_CONNECTION_CAUSE: &str = "EDUPCONN";
+
+/// Default feature list advertised at registration, matching
+/// cloudflared's `features/defaultFeatures`.
+const DEFAULT_FEATURES: &[&str] = &[
+    "allow_remote_config",
+    "serialized_headers",
+    "support_datagram_v2",
+    "support_quic_eof",
+    "management_logs",
+];
 
 /// Options that go into `ConnectionOptions` at registration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct RegistrationOptions {
     pub features: Vec<String>,
     pub num_previous_attempts: u8,
+    pub origin_local_ip: Vec<u8>,
+}
+
+impl Default for RegistrationOptions {
+    fn default() -> Self {
+        Self {
+            features: DEFAULT_FEATURES.iter().map(|f| (*f).to_string()).collect(),
+            num_previous_attempts: 0,
+            origin_local_ip: Vec::new(),
+        }
+    }
 }
 
 fn build_connection_options(opts: &RegistrationOptions) -> ConnectionOptions {
@@ -26,21 +53,21 @@ fn build_connection_options(opts: &RegistrationOptions) -> ConnectionOptions {
             version: env!("CARGO_PKG_VERSION").to_string(),
             arch: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
         },
-        origin_local_ip: Vec::new(),
+        origin_local_ip: opts.origin_local_ip.clone(),
         replace_existing: false,
         compression_quality: 0,
         num_previous_attempts: opts.num_previous_attempts,
     }
 }
 
-/// Registers the tunnel with the edge on the control stream and pushes the
-/// local configuration when the tunnel is not remotely managed.
+/// Registers the tunnel with the edge on an open control stream and pushes
+/// the local configuration when the tunnel is not remotely managed.
 ///
 /// Returns the registration details and the still-open client so the caller
 /// can unregister later.
 pub(crate) async fn register(
     conn: &QuicConnection,
-    tunnel: &QuickTunnel,
+    tunnel: &Tunnel,
     opts: &RegistrationOptions,
     config_json: &[u8],
 ) -> Result<(
@@ -48,14 +75,25 @@ pub(crate) async fn register(
     TunnelClient<QuicStream>,
 )> {
     let stream = conn.open_control_stream();
-    let rpc = RpcClient::new(stream);
+    register_on_stream(stream, tunnel, opts, config_json).await
+}
+
+/// Registers the tunnel over any control stream (QUIC stream 0 or the HTTP/2
+/// control-stream request body).
+pub(crate) async fn register_on_stream<S: AsyncStream + Unpin>(
+    stream: S,
+    tunnel: &Tunnel,
+    opts: &RegistrationOptions,
+    config_json: &[u8],
+) -> Result<(libcfd_rpc::tunnel::ConnectionDetails, TunnelClient<S>)> {
+    let rpc = libcfd_rpc::RpcClient::new(stream);
     let mut client = TunnelClient::new(rpc);
     client.bootstrap().await?;
 
     let tunnel_id = tunnel.tunnel_id_bytes()?;
     let auth = TunnelAuth {
-        account_tag: tunnel.account_tag.clone(),
-        tunnel_secret: tunnel.secret.clone(),
+        account_tag: tunnel.account_tag().to_string(),
+        tunnel_secret: tunnel.tunnel_secret().to_vec(),
     };
     let options = build_connection_options(opts);
     let response = client
@@ -65,6 +103,10 @@ pub(crate) async fn register(
     let details = match response {
         ConnectionResponse::Details(details) => details,
         ConnectionResponse::Error(e) => {
+            if e.cause == DUPLICATE_CONNECTION_CAUSE {
+                let _ = client.close().await;
+                return Err(Error::DuplicateConnection(e.cause));
+            }
             let _ = client.close().await;
             return Err(Error::Registration(e.into()));
         }
@@ -79,13 +121,27 @@ pub(crate) async fn register(
     Ok((details, client))
 }
 
-/// Unregisters the connection gracefully.
-pub(crate) async fn unregister(mut client: TunnelClient<QuicStream>) -> Result<()> {
-    match client.unregister_connection().await {
-        Ok(()) => {}
-        Err(e) => tracing::debug!("unregister failed: {e}"),
+/// Unregisters the connection gracefully, bounded by the grace period so a
+/// dead edge cannot hang shutdown (cloudflared uses the same bound).
+pub(crate) async fn unregister<S: AsyncStream + Unpin>(
+    client: TunnelClient<S>,
+    grace_period: Duration,
+) -> Result<()> {
+    let result = tokio::time::timeout(grace_period, async {
+        let mut client = client;
+        match client.unregister_connection().await {
+            Ok(()) => {}
+            Err(e) => tracing::debug!("unregister failed: {e}"),
+        }
+        let rpc = client.into_inner();
+        let _ = rpc.close().await;
+    })
+    .await;
+    match result {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            tracing::debug!("unregister timed out after {grace_period:?}");
+            Ok(())
+        }
     }
-    let rpc = client.into_inner();
-    let _ = rpc.close().await;
-    Ok(())
 }

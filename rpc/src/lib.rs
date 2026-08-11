@@ -36,7 +36,7 @@ pub use quic::{
     HTTP_HEADER_KEY, HTTP_HOST_KEY, HTTP_METHOD_KEY, HTTP_STATUS_KEY, PROTOCOL_V1,
     RPC_STREAM_PROTOCOL_SIGNATURE,
 };
-pub use rpc::{Incoming, RpcClient, read_incoming};
+pub use rpc::{Incoming, RpcClient, read_incoming, send_exception};
 pub use tunnel::{
     ClientInfo, ConnectionDetails, ConnectionError, ConnectionOptions, ConnectionResponse,
     RegistrationFailure, TunnelAuth, TunnelClient,

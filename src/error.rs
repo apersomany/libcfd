@@ -12,6 +12,9 @@ pub enum Error {
     /// The HTTP request to the quick tunnel API failed.
     #[error("quick tunnel API request failed: {0}")]
     QuickTunnelRequest(#[source] std::io::Error),
+    /// A named tunnel credentials file could not be loaded or parsed.
+    #[error("named tunnel credentials error: {0}")]
+    NamedTunnelCredentials(String),
     /// Edge discovery (DNS SRV or fallback resolution) failed.
     #[error("edge discovery failed: {0}")]
     EdgeDiscovery(String),
@@ -21,6 +24,16 @@ pub enum Error {
     /// Registration with the edge was rejected.
     #[error("registration failed: {0}")]
     Registration(#[source] libcfd_rpc::tunnel::RegistrationFailure),
+    /// The edge rejected the connection because the tunnel is already
+    /// registered elsewhere (cloudflared's `EDUPCONN`).
+    #[error("duplicate connection: {0}")]
+    DuplicateConnection(String),
+    /// The HTTP/2 edge connection failed.
+    #[error("http2 edge connection failed: {0}")]
+    H2(String),
+    /// The edge sent a request type no origin handler covers.
+    #[error("unhandled edge request: {0}")]
+    Unhandled(String),
     /// The edge returned an error for the RPC stream.
     #[error("control stream error: {0}")]
     Control(#[from] libcfd_rpc::RpcError),
@@ -56,4 +69,22 @@ impl From<quiche::Error> for Error {
     }
 }
 
+impl From<h2::Error> for Error {
+    fn from(err: h2::Error) -> Self {
+        Self::H2(err.to_string())
+    }
+}
+
 pub(crate) type Result<T> = std::result::Result<T, Error>;
+
+impl Error {
+    /// Whether retrying this error is pointless (the edge will keep
+    /// rejecting the tunnel), mirroring cloudflared's permanent-vs-retryable
+    /// registration split.
+    pub(crate) fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Error::Registration(libcfd_rpc::tunnel::RegistrationFailure::Permanent(_))
+        )
+    }
+}

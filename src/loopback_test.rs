@@ -18,10 +18,10 @@ use tokio::sync::{Notify, watch};
 
 use crate::control::{self, RegistrationOptions};
 use crate::error::{Error, Result};
-use crate::origin::{Body, HttpOriginDyn, Request, Response};
+use crate::origin::{Body, Origin, Request, Response};
 use crate::quic::{Inner, QuicConnection, QuicStream, drive};
 use crate::serve;
-use crate::tunnel::QuickTunnel;
+use crate::tunnel::{QuickTunnel, Tunnel};
 
 // Genuine capnp-go replies, byte-identical to libcfd-rpc's verified goldens.
 const BOOTSTRAP_RETURN: &str = "000000000b00000000000000010001000300000000000000000000000200010000000000010000000000000000000000000000000000020003000000000000000100000017000000040000000100010001000000000000000000000000000000";
@@ -223,7 +223,7 @@ async fn quic_tunnel_end_to_end() {
         let e = edge_control.clone();
         async move { e.serve_control().await }
     });
-    let tunnel = make_tunnel();
+    let tunnel = Tunnel::quick(make_tunnel());
     let opts = RegistrationOptions::default();
     let (_details, _client) = tokio::time::timeout(
         Duration::from_secs(15),
@@ -234,7 +234,7 @@ async fn quic_tunnel_end_to_end() {
     .expect("client should register with the mock edge");
 
     let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel();
-    let origin: Arc<dyn HttpOriginDyn> = Arc::new(move |mut request: Request| {
+    let origin = Origin::http(move |mut request: Request| {
         let seen_tx = seen_tx.clone();
         async move {
             let mut body = request.body.collect().await.expect("body read");
@@ -257,7 +257,7 @@ async fn quic_tunnel_end_to_end() {
     });
 
     let conn = Arc::new(conn);
-    let serve_task = tokio::spawn(serve::serve_requests(conn.clone(), origin));
+    let serve_task = tokio::spawn(serve::serve_requests(conn.clone(), Arc::new(origin)));
 
     let (response, body) = edge_control
         .request_and_read()

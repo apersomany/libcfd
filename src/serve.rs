@@ -1,18 +1,20 @@
-//! Serving incoming HTTP requests from the edge to the origin handler.
+//! Serving incoming edge streams to the origin handlers.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::io::{AsyncReadExt, AsyncWriteExt};
+use futures_util::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use libcfd_rpc::Incoming;
 use libcfd_rpc::quic::{
-    ConnectResponse, ConnectionType, DATA_STREAM_PROTOCOL_SIGNATURE, HTTP_HOST_KEY,
-    HTTP_METHOD_KEY, HTTP_STATUS_KEY, PROTOCOL_V1, read_connect_request, write_connect_response,
+    ConnectRequest, ConnectResponse, ConnectionType, DATA_STREAM_PROTOCOL_SIGNATURE, HTTP_HOST_KEY,
+    HTTP_METHOD_KEY, HTTP_STATUS_KEY, PROTOCOL_V1, RPC_STREAM_PROTOCOL_SIGNATURE,
+    read_connect_request, write_connect_response,
 };
 
 use crate::error::{Error, Result};
-use crate::origin::{Body, HttpOriginDyn, Request, Response};
-use crate::quic::QuicConnection;
+use crate::origin::{Body, Duplex, Origin, Request, Response};
+use crate::quic::{QuicConnection, QuicStream};
 
 const HEADER_KEY_PREFIX: &str = "HttpHeader:";
 /// Max bytes drained from an unread request body after the handler returns.
@@ -21,10 +23,7 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Accepts incoming streams and dispatches each new data stream to a
 /// per-request task. The control stream (id 0) is skipped.
-pub(crate) async fn serve_requests(
-    conn: Arc<QuicConnection>,
-    origin: Arc<dyn HttpOriginDyn>,
-) -> Result<()> {
+pub(crate) async fn serve_requests(conn: Arc<QuicConnection>, origin: Arc<Origin>) -> Result<()> {
     let mut active = HashSet::new();
     active.insert(0);
     let mut rx = conn.subscribe();
@@ -58,43 +57,50 @@ pub(crate) async fn serve_requests(
     }
 }
 
-async fn serve_stream(
-    conn: Arc<QuicConnection>,
-    origin: &dyn HttpOriginDyn,
-    stream_id: u64,
-) -> Result<()> {
+async fn serve_stream(conn: Arc<QuicConnection>, origin: &Origin, stream_id: u64) -> Result<()> {
     let mut stream = conn.stream(stream_id);
 
-    let mut header = [0u8; 8];
-    stream.read_exact(&mut header).await?;
-    if header[..6] != DATA_STREAM_PROTOCOL_SIGNATURE {
+    let mut signature = [0u8; 6];
+    stream.read_exact(&mut signature).await?;
+    if signature == RPC_STREAM_PROTOCOL_SIGNATURE {
+        return handle_rpc_stream(stream).await;
+    }
+    if signature != DATA_STREAM_PROTOCOL_SIGNATURE {
         return Err(Error::Quic(format!(
             "stream {stream_id} has no data-stream signature"
         )));
     }
-    if &header[6..] != PROTOCOL_V1 {
+    let mut version = [0u8; 2];
+    stream.read_exact(&mut version).await?;
+    if version != PROTOCOL_V1 {
         return Err(Error::Quic(format!(
             "stream {stream_id} has unsupported protocol version"
         )));
     }
 
     let connect = read_connect_request(&mut stream).await?;
-    if connect.conn_type != ConnectionType::Http {
-        return Err(Error::Quic(format!(
-            "stream {stream_id} is not an http request (type {:?})",
-            connect.conn_type
-        )));
+    match connect.conn_type {
+        ConnectionType::Http => handle_quic_http(conn, origin, connect, stream_id).await,
+        ConnectionType::Websocket => handle_quic_websocket(conn, origin, connect, stream_id).await,
+        ConnectionType::Tcp => handle_quic_tcp(conn, origin, connect, stream_id).await,
     }
+}
 
-    let request = build_request(connect)?;
+async fn handle_quic_http(
+    conn: Arc<QuicConnection>,
+    origin: &Origin,
+    connect: ConnectRequest,
+    stream_id: u64,
+) -> Result<()> {
+    let request = build_request(&connect)?;
     let request = Request::new(
         request.method,
         request.uri,
         request.headers,
-        Body::from_reader(stream),
+        Body::from_reader(conn.stream(stream_id)),
     );
 
-    let response = match origin.handle_boxed(request).await {
+    let response = match origin.http.handle_boxed(request).await {
         Ok(response) => response,
         Err(e) => {
             tracing::warn!("origin handler failed: {e}");
@@ -108,15 +114,21 @@ async fn serve_stream(
         error: String::new(),
         metadata,
     };
-    resp_stream
-        .write_all(&DATA_STREAM_PROTOCOL_SIGNATURE)
-        .await?;
-    resp_stream.write_all(PROTOCOL_V1).await?;
-    write_connect_response(&mut resp_stream, &connect_response).await?;
+    if let Err(e) = write_response_preamble(&mut resp_stream, &connect_response).await {
+        cancel_write(&conn, stream_id);
+        return Err(e);
+    }
 
     let mut body = response.body;
-    let copied = futures_util::io::copy(&mut body, &mut resp_stream).await?;
-    tracing::trace!(stream = stream_id, copied, "response sent");
+    let copied = futures_util::io::copy(&mut body, &mut resp_stream).await;
+    match copied {
+        Ok(_) => {}
+        Err(e) => {
+            cancel_write(&conn, stream_id);
+            return Err(Error::Io(e));
+        }
+    }
+    tracing::trace!(stream = stream_id, "response sent");
 
     // Drain any request body bytes the origin did not consume so the edge's
     // flow-control credit is not held forever.
@@ -126,7 +138,135 @@ async fn serve_stream(
     Ok(())
 }
 
-fn build_request(connect: libcfd_rpc::quic::ConnectRequest) -> Result<Request> {
+async fn handle_quic_websocket(
+    conn: Arc<QuicConnection>,
+    origin: &Origin,
+    connect: ConnectRequest,
+    stream_id: u64,
+) -> Result<()> {
+    let Some(websocket) = &origin.websocket else {
+        return write_stream_error(&conn, stream_id, "no websocket origin handler").await;
+    };
+    let request = build_request(&connect)?;
+    let connection = match websocket.connect_boxed(request).await {
+        Ok(connection) => connection,
+        Err(e) => return write_stream_error(&conn, stream_id, &format!("{e}")).await,
+    };
+
+    let mut resp_stream = conn.stream(stream_id);
+    let metadata = encode_response_metadata(&connection.response);
+    let connect_response = ConnectResponse {
+        error: String::new(),
+        metadata,
+    };
+    write_response_preamble(&mut resp_stream, &connect_response).await?;
+
+    pump(
+        connection.origin,
+        conn.stream(stream_id),
+        conn.stream(stream_id),
+    )
+    .await
+}
+
+async fn handle_quic_tcp(
+    conn: Arc<QuicConnection>,
+    origin: &Origin,
+    connect: ConnectRequest,
+    stream_id: u64,
+) -> Result<()> {
+    let Some(tcp) = &origin.tcp else {
+        return write_stream_error(&conn, stream_id, "no tcp origin handler").await;
+    };
+    let request = build_tcp_request(&connect);
+    let duplex = match tcp.connect_boxed(request).await {
+        Ok(duplex) => duplex,
+        Err(e) => return write_stream_error(&conn, stream_id, &format!("{e}")).await,
+    };
+
+    let mut resp_stream = conn.stream(stream_id);
+    write_response_preamble(&mut resp_stream, &ConnectResponse::default()).await?;
+
+    pump(duplex, conn.stream(stream_id), conn.stream(stream_id)).await
+}
+
+/// Handles edge-initiated RPC streams (session and configuration managers).
+/// libcfd does not implement those interfaces, so every call is answered
+/// with an `unimplemented` exception so the edge's RPC client fails cleanly.
+async fn handle_rpc_stream(mut stream: QuicStream) -> Result<()> {
+    loop {
+        match libcfd_rpc::read_incoming(&mut stream).await? {
+            Some(Incoming::Call { question_id, .. })
+            | Some(Incoming::Bootstrap { question_id }) => {
+                libcfd_rpc::send_exception(&mut stream, question_id, "unimplemented").await?;
+            }
+            Some(_) => {}
+            None => return Ok(()),
+        }
+    }
+}
+
+async fn write_stream_error(conn: &QuicConnection, stream_id: u64, message: &str) -> Result<()> {
+    let mut resp_stream = conn.stream(stream_id);
+    let connect_response = ConnectResponse {
+        error: message.to_string(),
+        metadata: vec![(HTTP_STATUS_KEY.to_string(), "502".to_string())],
+    };
+    write_response_preamble(&mut resp_stream, &connect_response).await?;
+    cancel_write(conn, stream_id);
+    Ok(())
+}
+
+async fn write_response_preamble(
+    stream: &mut QuicStream,
+    response: &ConnectResponse,
+) -> Result<()> {
+    stream.write_all(&DATA_STREAM_PROTOCOL_SIGNATURE).await?;
+    stream.write_all(PROTOCOL_V1).await?;
+    write_connect_response(stream, response).await?;
+    Ok(())
+}
+
+fn cancel_write(conn: &QuicConnection, stream_id: u64) {
+    let mut g = conn.inner.lock().unwrap();
+    if !g.closed {
+        let _ = g
+            .conn
+            .stream_shutdown(stream_id, quiche::Shutdown::Write, 0);
+        if let Some(w) = g.write_wakers.remove(&stream_id) {
+            w.wake();
+        }
+    }
+}
+
+/// Pumps bytes in both directions between an origin duplex and the edge
+/// stream until either side reaches the end, then closes both write halves.
+pub(crate) async fn pump<R, W>(origin: Duplex, edge_read: R, edge_write: W) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let (mut origin_read, mut origin_write) = origin.into_parts();
+    let mut edge_read = edge_read;
+    let mut edge_write = edge_write;
+    let edge_to_origin = futures_util::io::copy(&mut edge_read, &mut origin_write);
+    let origin_to_edge = futures_util::io::copy(&mut origin_read, &mut edge_write);
+    tokio::pin!(edge_to_origin);
+    tokio::pin!(origin_to_edge);
+    tokio::select! {
+        result = &mut edge_to_origin => {
+            result.map_err(Error::Io)?;
+        }
+        result = &mut origin_to_edge => {
+            result.map_err(Error::Io)?;
+        }
+    }
+    let _ = edge_write.close().await;
+    let _ = origin_write.close().await;
+    Ok(())
+}
+
+fn build_request(connect: &ConnectRequest) -> Result<Request> {
     let mut method = http::Method::GET;
     let mut headers = http::HeaderMap::new();
     for (key, val) in &connect.metadata {
@@ -148,6 +288,16 @@ fn build_request(connect: libcfd_rpc::quic::ConnectRequest) -> Result<Request> {
     let uri = http::Uri::try_from(connect.dest.as_str())
         .map_err(|e| Error::Quic(format!("invalid request dest {:?}: {e}", connect.dest)))?;
     Ok(Request::new(method, uri, headers, Body::empty()))
+}
+
+fn build_tcp_request(connect: &ConnectRequest) -> Request {
+    let uri = http::Uri::try_from(format!("http://{}", connect.dest)).unwrap_or_default();
+    Request::new(
+        http::Method::GET,
+        uri,
+        http::HeaderMap::new(),
+        Body::empty(),
+    )
 }
 
 fn encode_response_metadata(response: &Response) -> Vec<(String, String)> {
@@ -189,4 +339,51 @@ fn drain_unread(conn: Arc<QuicConnection>, stream_id: u64) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn http_request() -> ConnectRequest {
+        ConnectRequest {
+            dest: "http://example.com/path".into(),
+            conn_type: ConnectionType::Http,
+            metadata: vec![
+                ("HttpMethod".into(), "POST".into()),
+                ("HttpHost".into(), "example.com".into()),
+                ("HttpHeader:content-type".into(), "text/plain".into()),
+            ],
+        }
+    }
+
+    #[test]
+    fn classifies_http_request() {
+        let request = build_request(&http_request()).unwrap();
+        assert_eq!(request.method, http::Method::POST);
+        assert_eq!(request.uri, "http://example.com/path");
+        assert_eq!(request.headers[http::header::HOST], "example.com");
+        assert_eq!(request.headers["content-type"], "text/plain");
+    }
+
+    #[test]
+    fn classifies_tcp_request() {
+        let connect = ConnectRequest {
+            dest: "10.0.0.1:8080".into(),
+            conn_type: ConnectionType::Tcp,
+            metadata: vec![],
+        };
+        let request = build_tcp_request(&connect);
+        assert_eq!(request.uri.to_string(), "http://10.0.0.1:8080/");
+    }
+
+    #[test]
+    fn encodes_response_metadata() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(http::header::CONTENT_TYPE, "text/plain".parse().unwrap());
+        let response = Response::new(http::StatusCode::OK, headers, Body::empty());
+        let metadata = encode_response_metadata(&response);
+        assert!(metadata.contains(&("HttpStatus".into(), "200".into())));
+        assert!(metadata.contains(&("HttpHeader:content-type".into(), "text/plain".into())));
+    }
 }

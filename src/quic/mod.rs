@@ -4,7 +4,7 @@ mod stream;
 pub(crate) mod tls;
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::task::Waker;
 use std::time::Duration;
@@ -42,6 +42,7 @@ pub(crate) struct QuicConnection {
     pub(crate) inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
     seq_tx: watch::Sender<u64>,
+    local_ip: IpAddr,
 }
 
 impl QuicConnection {
@@ -92,9 +93,19 @@ impl QuicConnection {
             inner,
             notify,
             seq_tx,
+            local_ip: local.ip(),
         };
         conn.wait_established().await?;
         Ok(conn)
+    }
+
+    /// The local IP the connection is bound to, as raw bytes (4 for IPv4,
+    /// 16 for IPv6), matching the `originLocalIp` field cloudflared sends.
+    pub(crate) fn local_ip(&self) -> Vec<u8> {
+        match self.local_ip {
+            IpAddr::V4(ip) => ip.octets().to_vec(),
+            IpAddr::V6(ip) => ip.octets().to_vec(),
+        }
     }
 
     async fn wait_established(&self) -> Result<()> {

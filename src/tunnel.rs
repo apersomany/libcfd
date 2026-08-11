@@ -1,5 +1,6 @@
-//! Quick tunnel creation through the Cloudflare HTTP API.
+//! Tunnel identities: quick tunnels and named tunnels.
 
+use std::path::Path;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,66 @@ use crate::error::{Error, Result};
 
 /// Default quick tunnel service (trycloudflare.com).
 pub const DEFAULT_QUICK_SERVICE_URL: &str = "https://api.trycloudflare.com";
+
+/// A tunnel identity, containing everything an edge connection needs to
+/// register: the account tag, the tunnel id, and the tunnel secret.
+///
+/// Quick tunnels are created through the HTTP API and carry a public
+/// hostname; named tunnels are provisioned by an administrator and loaded
+/// from a credentials file or token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Tunnel {
+    Quick(QuickTunnel),
+    Named(NamedTunnel),
+}
+
+impl Tunnel {
+    pub fn quick(tunnel: QuickTunnel) -> Self {
+        Self::Quick(tunnel)
+    }
+
+    pub fn named(tunnel: NamedTunnel) -> Self {
+        Self::Named(tunnel)
+    }
+
+    /// The account tag that owns the tunnel.
+    pub fn account_tag(&self) -> &str {
+        match self {
+            Self::Quick(t) => &t.account_tag,
+            Self::Named(t) => &t.account_tag,
+        }
+    }
+
+    /// The tunnel secret used to prove ownership at registration.
+    pub fn tunnel_secret(&self) -> &[u8] {
+        match self {
+            Self::Quick(t) => &t.secret,
+            Self::Named(t) => &t.tunnel_secret,
+        }
+    }
+
+    /// The tunnel id as a UUID string.
+    pub fn tunnel_id(&self) -> &str {
+        match self {
+            Self::Quick(t) => &t.tunnel_id,
+            Self::Named(t) => &t.tunnel_id,
+        }
+    }
+
+    /// The 16-byte tunnel id.
+    pub fn tunnel_id_bytes(&self) -> Result<[u8; 16]> {
+        parse_tunnel_id(self.tunnel_id())
+    }
+
+    /// The public hostname of a quick tunnel, when this is one.
+    pub fn hostname(&self) -> Option<&str> {
+        match self {
+            Self::Quick(t) => Some(&t.hostname),
+            Self::Named(_) => None,
+        }
+    }
+}
 
 /// Options for [`create_quick_tunnel`].
 #[derive(Debug, Clone)]
@@ -55,14 +116,55 @@ impl QuickTunnel {
 
     /// The 16-byte tunnel id, as parsed from the API response.
     pub fn tunnel_id_bytes(&self) -> Result<[u8; 16]> {
-        let uuid = uuid::Uuid::parse_str(&self.tunnel_id)
-            .map_err(|e| Error::QuickTunnelResponse(format!("bad tunnel id: {e}")))?;
-        Ok(*uuid.as_bytes())
+        parse_tunnel_id(&self.tunnel_id)
     }
 }
 
+/// A named tunnel loaded from a credentials file.
+///
+/// The Serde layout matches cloudflared's credentials file exactly:
+/// `AccountTag`, `TunnelSecret` (standard base64) and `TunnelID` (a UUID
+/// string), with an optional `Endpoint` region override.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamedTunnel {
+    #[serde(rename = "AccountTag")]
+    pub account_tag: String,
+    #[serde(rename = "TunnelSecret", with = "secret_codec")]
+    pub tunnel_secret: Vec<u8>,
+    #[serde(rename = "TunnelID")]
+    pub tunnel_id: String,
+    #[serde(rename = "Endpoint", default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
+impl NamedTunnel {
+    /// Loads tunnel credentials from a cloudflared credentials file.
+    pub fn from_credentials_file(path: impl AsRef<Path>) -> Result<NamedTunnel> {
+        let bytes = std::fs::read(path.as_ref())?;
+        let tunnel: NamedTunnel = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::NamedTunnelCredentials(e.to_string()))?;
+        if tunnel.tunnel_id.is_empty() {
+            return Err(Error::NamedTunnelCredentials(
+                "credentials file has no TunnelID".into(),
+            ));
+        }
+        Ok(tunnel)
+    }
+
+    /// The 16-byte tunnel id.
+    pub fn tunnel_id_bytes(&self) -> Result<[u8; 16]> {
+        parse_tunnel_id(&self.tunnel_id)
+    }
+}
+
+fn parse_tunnel_id(id: &str) -> Result<[u8; 16]> {
+    let uuid = uuid::Uuid::parse_str(id)
+        .map_err(|e| Error::NamedTunnelCredentials(format!("bad tunnel id: {e}")))?;
+    Ok(*uuid.as_bytes())
+}
+
 /// Serializes the tunnel secret as base64, matching Go's `[]byte` JSON
-/// encoding that the quick tunnel service uses.
+/// encoding that the quick tunnel service and credentials files use.
 mod secret_codec {
     use base64::Engine as _;
     use serde::{Deserialize, Deserializer, Serializer};
@@ -166,27 +268,26 @@ pub async fn create_quick_tunnel(options: &QuickTunnelOptions) -> Result<QuickTu
 mod tests {
     use super::*;
 
-    #[test]
-    fn quick_tunnel_url_prepends_scheme() {
-        let t = QuickTunnel {
-            tunnel_id: "id".into(),
+    fn quick() -> QuickTunnel {
+        QuickTunnel {
+            tunnel_id: "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f".into(),
             name: String::new(),
             hostname: "abc.trycloudflare.com".into(),
             account_tag: "tag".into(),
-            secret: vec![],
-        };
+            secret: b"secret".to_vec(),
+        }
+    }
+
+    #[test]
+    fn quick_tunnel_url_prepends_scheme() {
+        let t = quick();
         assert_eq!(t.url(), "https://abc.trycloudflare.com");
     }
 
     #[test]
     fn quick_tunnel_url_keeps_scheme() {
-        let t = QuickTunnel {
-            tunnel_id: "id".into(),
-            name: String::new(),
-            hostname: "https://abc.trycloudflare.com".into(),
-            account_tag: "tag".into(),
-            secret: vec![],
-        };
+        let mut t = quick();
+        t.hostname = "https://abc.trycloudflare.com".into();
         assert_eq!(t.url(), "https://abc.trycloudflare.com");
     }
 
@@ -207,5 +308,44 @@ mod tests {
         let data: QuickTunnelResponse = serde_json::from_slice(body).unwrap();
         assert!(!data.success);
         assert_eq!(data.errors[0].message, "nope");
+    }
+
+    #[test]
+    fn named_tunnel_credentials_round_trip() {
+        let tunnel = NamedTunnel {
+            account_tag: "abc123".into(),
+            tunnel_secret: b"top-secret".to_vec(),
+            tunnel_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            endpoint: None,
+        };
+        let json = serde_json::to_value(&tunnel).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "AccountTag": "abc123",
+                "TunnelSecret": "dG9wLXNlY3JldA==",
+                "TunnelID": "550e8400-e29b-41d4-a716-446655440000",
+            })
+        );
+        let back: NamedTunnel = serde_json::from_value(json).unwrap();
+        assert_eq!(back.account_tag, "abc123");
+        assert_eq!(back.tunnel_secret, b"top-secret");
+        assert_eq!(back.tunnel_id, "550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn tunnel_enum_round_trip() {
+        let tunnel = Tunnel::quick(quick());
+        let json = serde_json::to_value(&tunnel).unwrap();
+        let back: Tunnel = serde_json::from_value(json).unwrap();
+        assert_eq!(back.account_tag(), "tag");
+        assert_eq!(back.tunnel_secret(), b"secret");
+        assert_eq!(back.tunnel_id(), "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f");
+    }
+
+    #[test]
+    fn tunnel_id_bytes_parse() {
+        let tunnel = Tunnel::quick(quick());
+        assert_eq!(tunnel.tunnel_id_bytes().unwrap().len(), 16);
     }
 }

@@ -5,7 +5,7 @@
 //! `capnp` directly.
 
 use crate::error::Result;
-use crate::io::{AsyncStream, read_message, write_message};
+use crate::io::{AsyncStream, read_message};
 use crate::quic_metadata_protocol_capnp as mpc;
 
 /// Magic bytes that identify a data (request) stream, from cloudflared's
@@ -80,7 +80,8 @@ pub async fn write_connect_response<S: AsyncStream + Unpin>(
     response: &ConnectResponse,
 ) -> Result<()> {
     let message = encode_connect_response(response)?;
-    write_message(stream, &message).await
+    let bytes = crate::io::serialize_message(&message);
+    crate::io::write_raw(stream, &bytes).await
 }
 
 /// Encodes a `ConnectResponse` into a Cap'n Proto message.
@@ -131,7 +132,8 @@ pub async fn write_connect_request<S: AsyncStream + Unpin>(
     request: &ConnectRequest,
 ) -> Result<()> {
     let message = encode_connect_request(request)?;
-    write_message(stream, &message).await
+    let bytes = crate::io::serialize_message(&message);
+    crate::io::write_raw(stream, &bytes).await
 }
 
 fn decode_connect_request_message<R: capnp::message::ReaderSegments>(

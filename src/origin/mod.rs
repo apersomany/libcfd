@@ -6,11 +6,176 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use futures_util::io::{self, AsyncRead};
+use futures_util::io::{self, AsyncRead, AsyncWrite};
 
 use crate::error::Result;
+
+/// A read-only half of a [`Duplex`].
+pub type ReadHalf = Pin<Box<dyn AsyncRead + Send>>;
+/// A write-only half of a [`Duplex`].
+pub type WriteHalf = Pin<Box<dyn AsyncWrite + Send>>;
+
+/// A raw bidirectional byte stream between the edge and an origin handler.
+///
+/// Used for websocket and TCP connections once the transport switches to
+/// raw streaming. The halves are runtime-agnostic (`futures_io` traits);
+/// consumers typically split their own socket and pass the halves here.
+pub struct Duplex {
+    read: ReadHalf,
+    write: WriteHalf,
+}
+
+impl Duplex {
+    pub fn new<R, W>(read: R, write: W) -> Self
+    where
+        R: AsyncRead + Send + 'static,
+        W: AsyncWrite + Send + 'static,
+    {
+        Self {
+            read: Box::pin(read),
+            write: Box::pin(write),
+        }
+    }
+
+    /// Splits the duplex back into its read and write halves.
+    pub fn into_parts(self) -> (ReadHalf, WriteHalf) {
+        (self.read, self.write)
+    }
+}
+
+impl AsyncRead for Duplex {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.read.as_mut().poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Duplex {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.write.as_mut().poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.write.as_mut().poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.write.as_mut().poll_close(cx)
+    }
+}
+
+/// An upgrade accepted by a [`WebSocketOrigin`]: the response headers to
+/// send to the edge and the origin-side byte stream to pump.
+pub struct WebSocketConnection {
+    pub response: Response,
+    pub origin: Duplex,
+}
+
+/// Handles websocket upgrades from the edge.
+///
+/// `connect` runs the origin-side handshake (the consumer owns all origin
+/// I/O) and returns the response the edge should see, plus the origin byte
+/// stream. The transport sends the response and then pumps bytes in both
+/// directions between the edge stream and `origin`.
+pub trait WebSocketOrigin: Send + Sync {
+    fn connect(
+        &self,
+        request: Request,
+    ) -> impl Future<Output = Result<WebSocketConnection>> + Send + '_;
+}
+
+/// Object-safe version of [`WebSocketOrigin`] for boxed/dyn use.
+pub trait WebSocketOriginDyn: Send + Sync {
+    fn connect_boxed(
+        &self,
+        request: Request,
+    ) -> Pin<Box<dyn Future<Output = Result<WebSocketConnection>> + Send + '_>>;
+}
+
+impl<T: WebSocketOrigin> WebSocketOriginDyn for T {
+    fn connect_boxed(
+        &self,
+        request: Request,
+    ) -> Pin<Box<dyn Future<Output = Result<WebSocketConnection>> + Send + '_>> {
+        Box::pin(self.connect(request))
+    }
+}
+
+/// Handles raw TCP connections from the edge.
+///
+/// `connect` establishes the consumer-side connection (consumers own origin
+/// I/O) and returns the byte stream to pump with the edge. The destination
+/// host is carried in `request.uri` (`http://<host>[:port]`).
+pub trait TcpOrigin: Send + Sync {
+    fn connect(&self, request: Request) -> impl Future<Output = Result<Duplex>> + Send + '_;
+}
+
+/// Object-safe version of [`TcpOrigin`] for boxed/dyn use.
+pub trait TcpOriginDyn: Send + Sync {
+    fn connect_boxed(
+        &self,
+        request: Request,
+    ) -> Pin<Box<dyn Future<Output = Result<Duplex>> + Send + '_>>;
+}
+
+impl<T: TcpOrigin> TcpOriginDyn for T {
+    fn connect_boxed(
+        &self,
+        request: Request,
+    ) -> Pin<Box<dyn Future<Output = Result<Duplex>> + Send + '_>> {
+        Box::pin(self.connect(request))
+    }
+}
+
+/// The set of origin handlers a tunnel run dispatches to.
+///
+/// Every run needs an [`HttpOrigin`]; websocket and TCP handlers are
+/// optional and enabled with [`Origin::with_websocket`] and
+/// [`Origin::with_tcp`].
+pub struct Origin {
+    pub(crate) http: Arc<dyn HttpOriginDyn>,
+    pub(crate) websocket: Option<Arc<dyn WebSocketOriginDyn>>,
+    pub(crate) tcp: Option<Arc<dyn TcpOriginDyn>>,
+}
+
+impl Origin {
+    pub fn http<O>(http: O) -> Self
+    where
+        O: HttpOrigin + Send + Sync + 'static,
+    {
+        Self {
+            http: Arc::new(http),
+            websocket: None,
+            tcp: None,
+        }
+    }
+
+    pub fn with_websocket<O>(mut self, websocket: O) -> Self
+    where
+        O: WebSocketOrigin + Send + Sync + 'static,
+    {
+        self.websocket = Some(Arc::new(websocket));
+        self
+    }
+
+    pub fn with_tcp<O>(mut self, tcp: O) -> Self
+    where
+        O: TcpOrigin + Send + Sync + 'static,
+    {
+        self.tcp = Some(Arc::new(tcp));
+        self
+    }
+}
 
 /// An incoming HTTP request from the edge.
 #[derive(Debug)]
