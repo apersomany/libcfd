@@ -31,9 +31,6 @@ pub enum Error {
     /// The HTTP/2 edge connection failed.
     #[error("http2 edge connection failed: {0}")]
     H2(String),
-    /// The edge sent a request type no origin handler covers.
-    #[error("unhandled edge request: {0}")]
-    Unhandled(String),
     /// The edge returned an error for the RPC stream.
     #[error("control stream error: {0}")]
     Control(#[from] libcfd_rpc::RpcError),
