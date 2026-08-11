@@ -1,75 +1,116 @@
-# Goals
+# Project objective
 
-Port Cloudflared to Rust as a library.
+Port the Cloudflare Tunnel behavior needed by library consumers from `cloudflared` to Rust.
 
-## Phase A
+`libcfd` is a library, not a CLI or daemon. Its public API must let consumers create tunnels, establish edge connections, and handle origin traffic without adopting a particular async runtime.
 
-The goal of Phase A is to reach minimal functional parity with `cloudflared tunnel --url <url>`.
+# Reference implementation
+
+The `cloudflared/` checkout is the behavioral and protocol reference.
+
+- Inspect its source to understand behavior, data formats, state transitions, and protocol details.
+- Compile, run, instrument, and test it when static analysis is insufficient.
+- Do not copy its files or substantial source into this workspace. Implement the behavior independently in Rust.
+- Conventional build-integration boilerplate, such as a `capnpc` build script, may be adapted from authoritative documentation or examples. Preserve attribution and licensing when required.
+- Treat `cloudflared/` as read-only unless the task explicitly asks to modify it.
+
+# Roadmap
+
+Complete phases in order. Later-phase requirements should inform current designs, but must not cause speculative abstractions or broaden the active phase.
+
+## Phase A: Quick Tunnel over QUIC
+
+Reach library-level functional parity with `cloudflared tunnel --url <url>` for HTTP traffic. Parity means the library can:
+
+- create a Quick Tunnel through the HTTP API;
+- discover and connect to a Cloudflare edge over QUIC;
+- register and maintain the tunnel connection;
+- deliver incoming HTTP requests to a consumer-provided origin handler; and
+- return the handler's HTTP responses to the edge.
+
+Use `quiche` first. Switch to `quinn` only after identifying a concrete blocker and confirming the change with the user.
+
+## Phase B: Named tunnels and additional transports
 
 ### Tunnels
-- Quick Tunnel support (via HTTP API)
+
+- Introduce a shared `Tunnel` abstraction containing the credentials needed by edge connections.
+- Add `QuickTunnel` and `NamedTunnel`.
+- Make `Tunnel`, `QuickTunnel`, and `NamedTunnel` serializable and deserializable with Serde.
 
 ### Origins
-- HTTP origin
 
-### Edge Connections
-- QUIC edge connections
-- Try quiche, if it's too hard or doesn't work use quinn
-## Phase B
+- Add consumer-provided WebSocket and TCP origin handlers.
 
-The goal of Phase B is to implement most features of `cloudflare tunnel`.
+### Edge connections
 
-### Tunnels
-- Shared `Tunnel` abstraction for storing tunnel credentials to be used by `EdgeConnection`
-- `QuickTunnel`
-- `NamedTunnel`
-- `Tunnel`, `QuickTunnel`, `NamedTunnel` must be serde (de)serializable
+- Add HTTP/2 edge connections, not h2mux.
+- Add `EdgeConnector` to orchestrate edge discovery, connection establishment, retries, and transport selection.
 
-### Origins
-- WebSocket origin
-- TCP origin
+## Phase C: Stable abstractions
 
-### Edge Connections
-- H2 (not h2mux) edge connections
-- `EdgeConnector` for orchestration
-
-## Phase C
-
-The goal of Phase C is to come up with abstractions within the constraints of the API surface (both library and backend) that we have.
+Refine the API after the supported backend behavior and constraints are understood.
 
 ### General
-- Move from anyhow to thiserror for better error handling
+
+- Replace broad `anyhow` errors with typed `thiserror` errors at stable boundaries.
+- Preserve compatibility where practical while consolidating abstractions.
 
 ### Tunnels
-- Gate Quick Tunnels and perhaps Named Tunnels behind features "quick-tunnel" and "named-tunnel"
+
+- Gate Quick Tunnel support behind `quick-tunnel`.
+- Evaluate whether Named Tunnel support should be gated behind `named-tunnel`.
 
 ### Origins
-- Abstracted origin system that supports a variety of origins
-- `HttpOrigin`
-- `WebSocketOrigin`
-- `TcpOrigin`
-- `AxumOrigin` (possibly with WebSocket upgrades, but this might be impossible due to hyper's API surface visibility)
 
-### Edge Connections
-- Migrate to quiche from quinn if we haven't already
-- Abstracted `EdgeConnection` type shared by `H2EdgeConnection` and `QuicEdgeConnection`
-- Gate H2 and QUIC behind features behind "h2-edge" and "quic-edge"
+- Introduce a shared origin abstraction.
+- Provide `HttpOrigin`, `WebSocketOrigin`, and `TcpOrigin` implementations or adapters.
+- Explore an `AxumOrigin`, including WebSocket upgrades, only if Hyper and Axum expose the required API safely.
 
+### Edge connections
 
-# Non-Goals
-- CLI replication
-- Daemonization for named tunnels
-- Origins actually connecting to (local) services (this is something that consumers of libcfd should implement themselves)
+- Use `quiche` instead of `quinn` unless Phase A established a documented blocker.
+- Introduce a shared `EdgeConnection` abstraction for `H2EdgeConnection` and `QuicEdgeConnection`.
+- Gate transports behind `h2-edge` and `quic-edge`.
 
-# Rules
-- <import from system prompt>
-- Never copy files directly from cloudflared, but rather reference them directly.
-- All public futures / functions are Send (therefore, no use of capnp-rpc).
-- Only the libcfd-rpc (rpc) crate may have capnp* as a direct dependency. libcfd does not interface with capnp directly.
-- Code for testing should always stay minimal.
-- Minimize unnecessary buffer copies by using good abstraction.
-- Dependencies must always be minimized for the given set of features at the end of a run.
-- Always use the latest version of dependencies unless there is a conflict. As such, always manage dependencies with Cargo CLI, not by editing Cargo.toml.
-- Initially use anyhow for faster iteration
-- Use tracing for logs
-- Make the API surface be runtime agnostic (use futures).
+# Non-goals
+
+- Replicating the `cloudflared` CLI.
+- Daemonizing named tunnels.
+- Dialing local origin services from `libcfd`. Consumers own origin I/O and provide handlers or adapters to the library.
+- Porting unrelated `cloudflared` features before the active phase requires them.
+
+# Architecture constraints
+
+- Keep the public API async-runtime agnostic. Do not expose Tokio, async-std, or another executor's concrete types.
+- Every future exposed or returned by a public API must implement `Send`.
+- Do not use `capnp-rpc`, because its futures do not satisfy the `Send` requirement.
+- Only `libcfd-rpc` may depend directly on `capnp` crates. The main `libcfd` crate must interact with RPC through types and APIs exposed by `libcfd-rpc`.
+- Keep origin handling transport-neutral where the active phase permits it, but do not introduce Phase C abstractions prematurely.
+- Avoid unnecessary payload copies. Prefer borrowing, ownership transfer, or shared buffers across protocol and origin boundaries.
+- Use `tracing` for diagnostics. Library code must not initialize a global subscriber.
+- Never log credentials, tunnel tokens, private keys, or request authorization data.
+
+# Implementation rules
+
+- Implement only the active phase and the smallest supporting surface needed for the task.
+- Prefer safe Rust. If unsafe code is unavoidable, keep it isolated and explain the invariant in a single concise comment.
+- Use `anyhow` for rapid internal iteration during Phases A and B. Do not expose internal context strings as a compatibility contract.
+- Keep tests focused and their support code minimal. Test observable behavior rather than duplicating implementation details.
+- Use the Cargo CLI for dependency changes, including `cargo add` and `cargo remove`; do not edit dependency entries in `Cargo.toml` manually.
+- Add the latest compatible dependency release unless a concrete compatibility issue requires a pin or older version.
+- Minimize dependencies and feature activation. Before finishing a task, remove unused dependencies and avoid enabling features not required by the implemented behavior.
+- Do not modify generated files when the schema or generation step can be changed instead.
+
+# Validation
+
+For every Rust code change, run:
+
+```text
+cargo fmt --all --check
+cargo check --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```
+
+Run narrower tests during iteration when useful, but they do not replace the final checks. Documentation-only changes do not require Rust validation. If an environmental or upstream issue prevents a check, report the exact command, failure, and remaining risk.
