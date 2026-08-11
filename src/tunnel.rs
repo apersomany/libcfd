@@ -24,18 +24,22 @@ pub const DEFAULT_QUICK_SERVICE_URL: &str = "https://api.trycloudflare.com";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Tunnel {
+    /// A tunnel created through the quick tunnel HTTP API.
     #[cfg(feature = "quick-tunnel")]
     Quick(QuickTunnel),
+    /// A tunnel loaded from a cloudflared credentials file.
     #[cfg(feature = "named-tunnel")]
     Named(NamedTunnel),
 }
 
 impl Tunnel {
+    /// Wraps a quick tunnel.
     #[cfg(feature = "quick-tunnel")]
     pub fn quick(tunnel: QuickTunnel) -> Self {
         Self::Quick(tunnel)
     }
 
+    /// Wraps a named tunnel.
     #[cfg(feature = "named-tunnel")]
     pub fn named(tunnel: NamedTunnel) -> Self {
         Self::Named(tunnel)
@@ -88,6 +92,7 @@ impl Tunnel {
 
     /// The region override carried by the tunnel credentials, if any
     /// (named tunnels can pin an `Endpoint` that acts as the region).
+    #[cfg_attr(not(any(feature = "quic-edge", feature = "h2-edge")), allow(dead_code))]
     pub(crate) fn region_override(&self) -> Option<String> {
         match self {
             #[cfg(feature = "named-tunnel")]
@@ -103,7 +108,7 @@ impl Tunnel {
 #[derive(Debug, Clone)]
 pub struct QuickTunnelOptions {
     /// Base URL of the quick tunnel service. Defaults to
-    /// [`DEFAULT_QUICK_SERVICE_URL`].
+    /// `DEFAULT_QUICK_SERVICE_URL`.
     pub service_url: String,
     /// HTTP timeout for the creation request.
     pub http_timeout: Duration,
@@ -126,10 +131,15 @@ impl Default for QuickTunnelOptions {
 #[cfg(feature = "quick-tunnel")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuickTunnel {
+    /// The tunnel id as a UUID string.
     pub tunnel_id: String,
+    /// The tunnel name assigned by the service.
     pub name: String,
+    /// The public hostname.
     pub hostname: String,
+    /// The account tag that owns the tunnel.
     pub account_tag: String,
+    /// The registration secret (opaque bytes; never logged).
     #[serde(with = "secret_codec")]
     pub secret: Vec<u8>,
 }
@@ -159,12 +169,16 @@ impl QuickTunnel {
 #[cfg(feature = "named-tunnel")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NamedTunnel {
+    /// The account tag that owns the tunnel.
     #[serde(rename = "AccountTag")]
     pub account_tag: String,
+    /// The registration secret (opaque bytes; never logged).
     #[serde(rename = "TunnelSecret", with = "secret_codec")]
     pub tunnel_secret: Vec<u8>,
+    /// The tunnel id as a UUID string.
     #[serde(rename = "TunnelID")]
     pub tunnel_id: String,
+    /// An optional edge region override stored in the credentials.
     #[serde(rename = "Endpoint", default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
 }

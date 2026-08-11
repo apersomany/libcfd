@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! `libcfd` is a library that connects to the Cloudflare Tunnel edge and
 //! serves origin traffic, without imposing a particular async runtime on its
 //! users.
@@ -40,14 +42,23 @@
 
 #[cfg(feature = "quick-tunnel")]
 mod api;
-#[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+#[cfg(all(
+    any(feature = "quick-tunnel", feature = "named-tunnel"),
+    any(feature = "quic-edge", feature = "h2-edge")
+))]
 mod connector;
-#[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+#[cfg(all(
+    any(feature = "quick-tunnel", feature = "named-tunnel"),
+    any(feature = "quic-edge", feature = "h2-edge")
+))]
 mod control;
-#[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+#[cfg(all(
+    any(feature = "quick-tunnel", feature = "named-tunnel"),
+    any(feature = "quic-edge", feature = "h2-edge")
+))]
 mod edge;
 mod error;
-#[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+#[cfg(any(feature = "quic-edge", feature = "h2-edge"))]
 mod event;
 #[cfg(feature = "h2-edge")]
 mod h2;
@@ -63,7 +74,10 @@ mod serve;
 #[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
 mod tunnel;
 
-#[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+#[cfg(all(
+    any(feature = "quick-tunnel", feature = "named-tunnel"),
+    any(feature = "quic-edge", feature = "h2-edge")
+))]
 pub use connector::{EdgeConnector, EdgeOptions, Transport, default_config_json};
 pub use error::Error;
 #[cfg(feature = "axum-origin")]

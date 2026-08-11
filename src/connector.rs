@@ -159,10 +159,12 @@ pub struct EdgeConnector {
 }
 
 impl EdgeConnector {
+    /// Creates a connector from the given options.
     pub fn new(options: EdgeOptions) -> Self {
         Self { options }
     }
 
+    /// The options this connector was created with.
     pub fn options(&self) -> &EdgeOptions {
         &self.options
     }

@@ -78,7 +78,10 @@ impl Error {
     /// Whether retrying this error is pointless (the edge will keep
     /// rejecting the tunnel), mirroring cloudflared's permanent-vs-retryable
     /// registration split.
-    #[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+    #[cfg(all(
+        any(feature = "quick-tunnel", feature = "named-tunnel"),
+        any(feature = "quic-edge", feature = "h2-edge")
+    ))]
     pub(crate) fn is_permanent(&self) -> bool {
         matches!(
             self,
@@ -117,7 +120,10 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+    #[cfg(all(
+        any(feature = "quick-tunnel", feature = "named-tunnel"),
+        any(feature = "quic-edge", feature = "h2-edge")
+    ))]
     #[test]
     fn registration_failure_classifies_permanent() {
         let retryable = libcfd_rpc::tunnel::RegistrationFailure::Retryable {

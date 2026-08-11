@@ -32,6 +32,7 @@ pub struct AxumOrigin {
 }
 
 impl AxumOrigin {
+    /// Wraps a router so it can serve as an `HttpOrigin`.
     pub fn new(router: axum::Router) -> Self {
         Self { router }
     }

@@ -32,6 +32,7 @@ pub struct Duplex {
 }
 
 impl Duplex {
+    /// Builds a duplex from separate read and write halves.
     pub fn new<R, W>(read: R, write: W) -> Self
     where
         R: AsyncRead + Send + 'static,
@@ -80,7 +81,10 @@ impl AsyncWrite for Duplex {
 /// An upgrade accepted by a [`WebSocketOrigin`]: the response headers to
 /// send to the edge and the origin-side byte stream to pump.
 pub struct WebSocketConnection {
+    /// The response headers to send to the edge (e.g. `101` with
+    /// `Sec-WebSocket-Accept`).
     pub response: Response,
+    /// The origin-side byte stream to pump with the edge.
     pub origin: Duplex,
 }
 
@@ -91,6 +95,8 @@ pub struct WebSocketConnection {
 /// stream. The transport sends the response and then pumps bytes in both
 /// directions between the edge stream and `origin`.
 pub trait WebSocketOrigin: Send + Sync {
+    /// Runs the origin-side websocket handshake and returns the response
+    /// headers plus the origin byte stream to pump.
     fn connect(
         &self,
         request: Request,
@@ -99,6 +105,7 @@ pub trait WebSocketOrigin: Send + Sync {
 
 /// Object-safe version of [`WebSocketOrigin`] for boxed/dyn use.
 pub trait WebSocketOriginDyn: Send + Sync {
+    /// Object-safe variant of [`WebSocketOrigin::connect`].
     fn connect_boxed(
         &self,
         request: Request,
@@ -120,11 +127,14 @@ impl<T: WebSocketOrigin> WebSocketOriginDyn for T {
 /// I/O) and returns the byte stream to pump with the edge. The destination
 /// host is carried in `request.uri` (`http://<host>[:port]`).
 pub trait TcpOrigin: Send + Sync {
+    /// Establishes the consumer-side connection and returns the byte stream
+    /// to pump with the edge.
     fn connect(&self, request: Request) -> impl Future<Output = Result<Duplex>> + Send + '_;
 }
 
 /// Object-safe version of [`TcpOrigin`] for boxed/dyn use.
 pub trait TcpOriginDyn: Send + Sync {
+    /// Object-safe variant of [`TcpOrigin::connect`].
     fn connect_boxed(
         &self,
         request: Request,
@@ -153,6 +163,7 @@ pub struct Origin {
 }
 
 impl Origin {
+    /// Creates an origin with an HTTP handler.
     pub fn http<O>(http: O) -> Self
     where
         O: HttpOrigin + Send + Sync + 'static,
@@ -164,6 +175,7 @@ impl Origin {
         }
     }
 
+    /// Adds a websocket handler.
     pub fn with_websocket<O>(mut self, websocket: O) -> Self
     where
         O: WebSocketOrigin + Send + Sync + 'static,
@@ -172,6 +184,7 @@ impl Origin {
         self
     }
 
+    /// Adds a raw TCP handler.
     pub fn with_tcp<O>(mut self, tcp: O) -> Self
     where
         O: TcpOrigin + Send + Sync + 'static,
@@ -184,13 +197,18 @@ impl Origin {
 /// An incoming HTTP request from the edge.
 #[derive(Debug)]
 pub struct Request {
+    /// The request method.
     pub method: http::Method,
+    /// The request target.
     pub uri: http::Uri,
+    /// The request headers.
     pub headers: http::HeaderMap,
+    /// The request body.
     pub body: Body,
 }
 
 impl Request {
+    /// Builds a request from its parts.
     pub fn new(method: http::Method, uri: http::Uri, headers: http::HeaderMap, body: Body) -> Self {
         Self {
             method,
@@ -204,12 +222,16 @@ impl Request {
 /// An HTTP response to send back to the edge.
 #[derive(Debug)]
 pub struct Response {
+    /// The response status.
     pub status: http::StatusCode,
+    /// The response headers.
     pub headers: http::HeaderMap,
+    /// The response body.
     pub body: Body,
 }
 
 impl Response {
+    /// Builds a response from its parts.
     pub fn new(status: http::StatusCode, headers: http::HeaderMap, body: Body) -> Self {
         Self {
             status,
@@ -245,6 +267,7 @@ enum BodyInner {
 }
 
 impl Body {
+    /// An empty body.
     pub fn empty() -> Self {
         Self {
             inner: BodyInner::Empty,
@@ -252,6 +275,7 @@ impl Body {
         }
     }
 
+    /// A body backed by bytes owned in memory.
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         let size_hint = Some(bytes.len() as u64);
         Self {
@@ -260,6 +284,7 @@ impl Body {
         }
     }
 
+    /// A streaming body backed by a reader that produces chunks on demand.
     pub fn from_reader(reader: impl AsyncRead + Send + 'static) -> Self {
         Self {
             inner: BodyInner::Reader(Box::pin(reader)),
@@ -386,11 +411,13 @@ where
 /// concurrently. The returned future is `Send`; wrap with [`HttpOriginDyn`]
 /// when object safety is needed.
 pub trait HttpOrigin: Send + Sync {
+    /// Handles one HTTP request from the edge and produces the response.
     fn handle(&self, request: Request) -> impl Future<Output = Result<Response>> + Send + '_;
 }
 
 /// Object-safe version of [`HttpOrigin`] for boxed/dyn use.
 pub trait HttpOriginDyn: Send + Sync {
+    /// Object-safe variant of [`HttpOrigin::handle`].
     fn handle_boxed(
         &self,
         request: Request,

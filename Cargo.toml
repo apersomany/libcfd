@@ -59,7 +59,7 @@ required-features = ["quick-tunnel", "h2-edge"]
 
 [[example]]
 name = "named_tunnel"
-required-features = ["named-tunnel"]
+required-features = ["named-tunnel", "quic-edge"]
 
 [[example]]
 name = "origin_ws_tcp"
