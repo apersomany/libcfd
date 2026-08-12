@@ -7,3 +7,6 @@
 
 # Orchestration scratch dir
 .pi-subagents/
+
+# Live-test tunnel credentials (real secrets; never commit)
+.test-creds/
