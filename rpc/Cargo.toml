@@ -11,7 +11,3 @@ tracing = "0.1"
 
 [build-dependencies]
 capnpc = "0.27"
-
-[dev-dependencies]
-futures = "0.3"
-tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread", "macros", "net"] }
