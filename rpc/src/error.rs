@@ -11,7 +11,12 @@ pub enum RpcError {
     Protocol(String),
     /// The peer aborted the RPC connection.
     #[error("rpc aborted by peer (type {error_type}): {reason}")]
-    Abort { reason: String, error_type: u16 },
+    Abort {
+        /// The abort reason reported by the peer.
+        reason: String,
+        /// The abort type code reported by the peer.
+        error_type: u16,
+    },
     /// The peer replied `unimplemented` to one of our messages.
     #[error("peer does not implement a required rpc message")]
     Unimplemented,

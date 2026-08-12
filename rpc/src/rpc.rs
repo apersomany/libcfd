@@ -33,6 +33,7 @@ enum CallOutcome<T> {
 }
 
 impl<S: AsyncStream + Unpin> RpcClient<S> {
+    /// Wraps a bidirectional stream as an RPC client.
     pub fn new(stream: S) -> Self {
         Self {
             stream,
@@ -41,6 +42,7 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
         }
     }
 
+    /// Returns the underlying stream (the connection stays open).
     pub fn into_inner(self) -> S {
         self.stream
     }
@@ -287,18 +289,28 @@ fn build_exception(question_id: u32, reason: &str) -> Result<Vec<u8>> {
 /// A summary of an incoming RPC message, sufficient for a server to dispatch.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
+    /// A bootstrap request for the peer's main interface.
     Bootstrap {
+        /// The question id to answer.
         question_id: u32,
     },
+    /// A method call.
     Call {
+        /// The question id to answer.
         question_id: u32,
+        /// The called interface.
         interface_id: u64,
+        /// The called method.
         method_id: u16,
     },
+    /// A finish for a resolved question.
     Finish {
+        /// The question id being released.
         question_id: u32,
     },
+    /// A capability release.
     Release,
+    /// Any other message kind (kept so the enum is exhaustive).
     Other,
 }
 

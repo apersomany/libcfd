@@ -9,7 +9,7 @@
 use libcfd::{
     Body, Duplex, EdgeConnector, EdgeOptions, HttpOrigin, Origin, QuickTunnelOptions, Request,
     Response, TcpOrigin, Transport, Tunnel, WebSocketConnection, WebSocketOrigin,
-    create_quick_tunnel,
+    create_quick_tunnel, websocket_accept,
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -61,16 +61,6 @@ impl WebSocketOrigin for EchoWebSocketOrigin {
             origin: Duplex::new(r.compat(), w.compat_write()),
         })
     }
-}
-
-/// Computes the RFC 6455 `Sec-WebSocket-Accept` value for a challenge key.
-fn websocket_accept(challenge_key: &str) -> String {
-    use base64::Engine as _;
-    use sha1::{Digest, Sha1};
-    let mut hasher = Sha1::new();
-    hasher.update(challenge_key.as_bytes());
-    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
 }
 
 /// Echoes the raw stream through a loopback TCP connection to `addr`.

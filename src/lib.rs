@@ -29,7 +29,13 @@
 //!
 //! All four are enabled by default. Transports can be disabled to slim the
 //! dependency tree; the [`Transport`] selection only offers enabled
-//! transports.
+//! transports. A transport feature without a tunnel feature still compiles
+//! (the tunnel-agnostic types remain), but no [`EdgeConnector`] entry point
+//! is available for that combination.
+//!
+//! The QUIC transport implements RFC 9000 (version 1). cloudflared also
+//! offers QUIC version 2; quiche 0.29 does not support it yet, so libcfd
+//! falls back to HTTP/2 if the edge ever stops serving v1.
 //!
 //! # Runtime notes
 //! - no Tokio types are exposed; callers drive the returned futures on a
@@ -58,18 +64,36 @@ mod control;
 ))]
 mod edge;
 mod error;
-#[cfg(any(feature = "quic-edge", feature = "h2-edge"))]
+// The transport modules are only compiled when a tunnel feature is present:
+// `h2` and `serve` use `crate::control`/`crate::tunnel`, and `quic` is only
+// reachable from them. This keeps every feature combination buildable.
+#[cfg(all(
+    any(feature = "quick-tunnel", feature = "named-tunnel"),
+    any(feature = "quic-edge", feature = "h2-edge")
+))]
 mod event;
-#[cfg(feature = "h2-edge")]
+#[cfg(all(
+    feature = "h2-edge",
+    any(feature = "quick-tunnel", feature = "named-tunnel")
+))]
 mod h2;
 mod origin;
-#[cfg(feature = "quic-edge")]
+#[cfg(all(
+    feature = "quic-edge",
+    any(feature = "quick-tunnel", feature = "named-tunnel")
+))]
 mod quic;
-#[cfg(any(feature = "quic-edge", feature = "h2-edge"))]
+#[cfg(all(
+    any(feature = "quick-tunnel", feature = "named-tunnel"),
+    any(feature = "quic-edge", feature = "h2-edge")
+))]
 mod roots;
 #[cfg(all(feature = "quick-tunnel", feature = "quic-edge"))]
 mod run;
-#[cfg(feature = "quic-edge")]
+#[cfg(all(
+    feature = "quic-edge",
+    any(feature = "quick-tunnel", feature = "named-tunnel")
+))]
 mod serve;
 #[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
 mod tunnel;
@@ -85,6 +109,7 @@ pub use origin::axum::AxumOrigin;
 pub use origin::{
     Body, Duplex, HttpOrigin, HttpOriginDyn, Origin, ReadHalf, Request, Response, TcpOrigin,
     TcpOriginDyn, WebSocketConnection, WebSocketOrigin, WebSocketOriginDyn, WriteHalf,
+    websocket_accept,
 };
 #[cfg(all(feature = "quick-tunnel", feature = "quic-edge"))]
 pub use run::{RunOptions, run_quick_tunnel};

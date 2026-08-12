@@ -2,9 +2,13 @@ use crate::error::Result;
 use crate::rpc::RpcClient;
 use crate::tunnelrpc_capnp;
 
+/// The 64-bit interface id of the edge's `RegistrationServer`.
 pub const REGISTRATION_SERVER_INTERFACE_ID: u64 = 0xf716_95ec_7fe8_5497;
+/// Method id of `registerConnection`.
 pub const METHOD_REGISTER_CONNECTION: u16 = 0;
+/// Method id of `unregisterConnection`.
 pub const METHOD_UNREGISTER_CONNECTION: u16 = 1;
+/// Method id of `updateLocalConfiguration`.
 pub const METHOD_UPDATE_LOCAL_CONFIGURATION: u16 = 2;
 
 /// The client's connector identity, sent as `ConnectionOptions.client`.
@@ -12,35 +16,46 @@ pub const METHOD_UPDATE_LOCAL_CONFIGURATION: u16 = 2;
 pub struct ClientInfo {
     /// 16-byte connector UUID.
     pub client_id: Vec<u8>,
+    /// Feature flags the connector advertises (e.g. `serialized_headers`).
     pub features: Vec<String>,
+    /// The client version string.
     pub version: String,
+    /// The client OS/architecture string.
     pub arch: String,
 }
 
 /// Parameters sent with `registerConnection`.
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionOptions {
+    /// The connector identity advertised to the edge.
     pub client: ClientInfo,
     /// Raw IP bytes of the local edge-facing address.
     pub origin_local_ip: Vec<u8>,
+    /// Whether to replace an existing connection for the same tunnel.
     pub replace_existing: bool,
+    /// The compression quality to use (0 disables it).
     pub compression_quality: u8,
+    /// How many previous connection attempts this process made.
     pub num_previous_attempts: u8,
 }
 
 /// Credentials proving ownership of the tunnel.
 #[derive(Debug, Clone, Default)]
 pub struct TunnelAuth {
+    /// The account tag that owns the tunnel.
     pub account_tag: String,
+    /// The tunnel secret (opaque bytes; never logged).
     pub tunnel_secret: Vec<u8>,
 }
 
 /// A rejected registration.
 #[derive(Debug, Clone)]
 pub struct ConnectionError {
+    /// The edge's error cause string.
     pub cause: String,
     /// Nanoseconds to wait before retrying.
     pub retry_after: i64,
+    /// Whether the edge considers the failure retryable.
     pub should_retry: bool,
 }
 
@@ -51,13 +66,16 @@ pub struct ConnectionDetails {
     pub uuid: Vec<u8>,
     /// Airport code of the edge colo.
     pub location_name: String,
+    /// Whether the tunnel is configured remotely by the edge.
     pub tunnel_is_remotely_managed: bool,
 }
 
 /// The `ConnectionResponse` union.
 #[derive(Debug, Clone)]
 pub enum ConnectionResponse {
+    /// The edge rejected the registration.
     Error(ConnectionError),
+    /// The registration succeeded.
     Details(ConnectionDetails),
 }
 
@@ -70,14 +88,17 @@ pub struct TunnelClient<S> {
 }
 
 impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
+    /// Wraps an [`RpcClient`] as a typed registration client.
     pub fn new(rpc: RpcClient<S>) -> Self {
         Self { rpc }
     }
 
+    /// Bootstraps the edge's registration interface.
     pub async fn bootstrap(&mut self) -> Result<()> {
         self.rpc.bootstrap().await.map(|_| ())
     }
 
+    /// Calls `registerConnection` with the tunnel credentials and options.
     pub async fn register_connection(
         &mut self,
         auth: TunnelAuth,
@@ -154,6 +175,7 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
             .await
     }
 
+    /// Calls `unregisterConnection` for the current connection.
     pub async fn unregister_connection(&mut self) -> Result<()> {
         self.rpc
             .call(
@@ -173,6 +195,8 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
             .await
     }
 
+    /// Pushes the local configuration to the edge via
+    /// `updateLocalConfiguration` (for locally-managed tunnels).
     pub async fn update_local_configuration(&mut self, config: &[u8]) -> Result<()> {
         let config = config.to_vec();
         self.rpc
@@ -194,6 +218,8 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
             .await
     }
 
+    /// Returns the underlying [`RpcClient`] without releasing the
+    /// registration capability.
     pub fn into_inner(self) -> RpcClient<S> {
         self.rpc
     }
@@ -209,6 +235,7 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
 /// result so callers can distinguish retryable failures without parsing
 /// strings.
 impl ConnectionResponse {
+    /// Converts the response into a typed registration result.
     pub fn into_result(self) -> std::result::Result<ConnectionDetails, RegistrationFailure> {
         match self {
             Self::Details(d) => Ok(d),
@@ -217,9 +244,17 @@ impl ConnectionResponse {
     }
 }
 
+/// A typed registration failure, split by retryability.
 #[derive(Debug, Clone)]
 pub enum RegistrationFailure {
-    Retryable { cause: String, retry_after: i64 },
+    /// The edge asked us to retry after a delay.
+    Retryable {
+        /// The edge's cause string.
+        cause: String,
+        /// Nanoseconds to wait before retrying.
+        retry_after: i64,
+    },
+    /// The edge will keep rejecting this tunnel; retrying is pointless.
     Permanent(String),
 }
 

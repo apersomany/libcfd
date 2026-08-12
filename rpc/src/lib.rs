@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! Cap'n Proto wire schemas and a minimal RPC client for Cloudflare Tunnel
 //! registration.
 //!
@@ -5,27 +7,35 @@
 //! main `libcfd` crate interacts with tunnel registration exclusively through
 //! the typed [`tunnel::TunnelClient`] facade.
 
+/// RPC errors.
 pub mod error;
+/// Stream framing and message I/O.
 pub mod io;
+/// Plain-Rust types for the QUIC per-stream metadata protocol.
 pub mod quic;
+/// The minimal Cap'n Proto RPC client.
 pub mod rpc;
+/// The typed tunnel registration facade.
 pub mod tunnel;
 
 pub mod rpc_capnp {
     #![allow(clippy::all)]
     #![allow(unused_imports)]
+    #![allow(missing_docs)]
     include!(concat!(env!("OUT_DIR"), "/rpc_capnp.rs"));
 }
 
 pub mod tunnelrpc_capnp {
     #![allow(clippy::all)]
     #![allow(unused_imports)]
+    #![allow(missing_docs)]
     include!(concat!(env!("OUT_DIR"), "/tunnelrpc_capnp.rs"));
 }
 
 pub mod quic_metadata_protocol_capnp {
     #![allow(clippy::all)]
     #![allow(unused_imports)]
+    #![allow(missing_docs)]
     include!(concat!(env!("OUT_DIR"), "/quic_metadata_protocol_capnp.rs"));
 }
 

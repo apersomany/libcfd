@@ -43,9 +43,9 @@ pub enum Error {
     /// An underlying I/O operation failed.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    /// The tunnel was asked to shut down.
-    #[error("tunnel shut down")]
-    Shutdown,
+    /// A tunnel id could not be parsed as a UUID.
+    #[error("invalid tunnel id: {0}")]
+    InvalidTunnelId(String),
 }
 
 impl From<String> for Error {
@@ -112,7 +112,7 @@ mod tests {
             Error::Tls("bad certificate".into()),
             Error::Origin("handler failed".into()),
             Error::Io(std::io::Error::other("io")),
-            Error::Shutdown,
+            Error::InvalidTunnelId("not a uuid".into()),
         ];
         for error in errors {
             let display = error.to_string();

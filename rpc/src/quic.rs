@@ -18,18 +18,27 @@ pub const RPC_STREAM_PROTOCOL_SIGNATURE: [u8; 6] = [0x52, 0xBB, 0x82, 0x5C, 0xDB
 /// The per-stream protocol version ("01").
 pub const PROTOCOL_V1: &[u8] = b"01";
 
-/// Metadata keys used on data streams.
+/// Metadata key carrying the HTTP request method on a data stream.
 pub const HTTP_METHOD_KEY: &str = "HttpMethod";
+/// Metadata key carrying the HTTP request host on a data stream.
 pub const HTTP_HOST_KEY: &str = "HttpHost";
+/// Prefix for per-header metadata entries (e.g. `HttpHeader:content-type`).
 pub const HTTP_HEADER_KEY: &str = "HttpHeader";
+/// Metadata key carrying the HTTP response status on a data stream.
 pub const HTTP_STATUS_KEY: &str = "HttpStatus";
+/// Metadata key carrying the flow id for datagram streams.
 pub const FLOW_ID_KEY: &str = "FlowID";
+/// Metadata key carrying the Cloudflare trace id.
 pub const TRACE_ID_KEY: &str = "cf-trace-id";
 
+/// The kind of connection the edge requests on a data stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionType {
+    /// A regular HTTP request.
     Http,
+    /// A websocket upgrade.
     Websocket,
+    /// A raw TCP stream.
     Tcp,
 }
 
@@ -54,15 +63,20 @@ impl ConnectionType {
 /// The connection request sent by the edge on a data stream.
 #[derive(Debug, Clone)]
 pub struct ConnectRequest {
+    /// The destination host and path (e.g. `http://example.com/path`).
     pub dest: String,
+    /// Whether the stream carries HTTP, websocket, or raw TCP traffic.
     pub conn_type: ConnectionType,
+    /// Method, host, and per-header metadata entries.
     pub metadata: Vec<(String, String)>,
 }
 
 /// The connection response sent back to the edge.
 #[derive(Debug, Clone, Default)]
 pub struct ConnectResponse {
+    /// An error message; empty on success.
     pub error: String,
+    /// Status and response-header metadata entries.
     pub metadata: Vec<(String, String)>,
 }
 

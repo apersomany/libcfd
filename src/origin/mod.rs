@@ -155,7 +155,13 @@ impl<T: TcpOrigin> TcpOriginDyn for T {
 /// Every run needs an [`HttpOrigin`]; websocket and TCP handlers are
 /// optional and enabled with [`Origin::with_websocket`] and
 /// [`Origin::with_tcp`].
-#[cfg_attr(not(any(feature = "quic-edge", feature = "h2-edge")), allow(dead_code))]
+#[cfg_attr(
+    not(all(
+        any(feature = "quic-edge", feature = "h2-edge"),
+        any(feature = "quick-tunnel", feature = "named-tunnel")
+    )),
+    allow(dead_code)
+)]
 pub struct Origin {
     pub(crate) http: Arc<dyn HttpOriginDyn>,
     pub(crate) websocket: Option<Arc<dyn WebSocketOriginDyn>>,
@@ -329,9 +335,18 @@ impl std::fmt::Debug for Body {
     }
 }
 
-/// Computes the RFC 6455 `Sec-Websocket-Accept` value for a challenge key.
-#[cfg_attr(not(feature = "h2-edge"), allow(dead_code))]
-pub(crate) fn websocket_accept(challenge_key: &str) -> String {
+/// Computes the RFC 6455 `Sec-WebSocket-Accept` value for a challenge key.
+///
+/// Consumers implementing [`WebSocketOrigin`] use this to answer the
+/// handshake in their `connect` method.
+#[cfg_attr(
+    not(all(
+        feature = "h2-edge",
+        any(feature = "quick-tunnel", feature = "named-tunnel")
+    )),
+    allow(dead_code)
+)]
+pub fn websocket_accept(challenge_key: &str) -> String {
     use base64::Engine as _;
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
@@ -346,7 +361,13 @@ pub(crate) fn websocket_accept(challenge_key: &str) -> String {
 /// Mirrors cloudflared's `PipeBidirectional`: each direction closes only
 /// its own destination write side when the source ends, and the other
 /// direction keeps pumping until it ends as well.
-#[cfg_attr(not(any(feature = "quic-edge", feature = "h2-edge")), allow(dead_code))]
+#[cfg_attr(
+    not(all(
+        any(feature = "quic-edge", feature = "h2-edge"),
+        any(feature = "quick-tunnel", feature = "named-tunnel")
+    )),
+    allow(dead_code)
+)]
 pub(crate) async fn pump<R, W>(origin: Duplex, edge_read: R, edge_write: W) -> Result<()>
 where
     R: AsyncRead + Unpin,

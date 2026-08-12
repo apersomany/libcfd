@@ -187,7 +187,9 @@ pub struct NamedTunnel {
 impl NamedTunnel {
     /// Loads tunnel credentials from a cloudflared credentials file.
     pub fn from_credentials_file(path: impl AsRef<Path>) -> Result<NamedTunnel> {
-        let bytes = std::fs::read(path.as_ref())?;
+        let bytes = std::fs::read(path.as_ref()).map_err(|e| {
+            Error::NamedTunnelCredentials(format!("failed to read credentials file: {e}"))
+        })?;
         let tunnel: NamedTunnel = serde_json::from_slice(&bytes)
             .map_err(|e| Error::NamedTunnelCredentials(e.to_string()))?;
         if tunnel.tunnel_id.is_empty() {
@@ -205,8 +207,8 @@ impl NamedTunnel {
 }
 
 fn parse_tunnel_id(id: &str) -> Result<[u8; 16]> {
-    let uuid = uuid::Uuid::parse_str(id)
-        .map_err(|e| Error::NamedTunnelCredentials(format!("bad tunnel id: {e}")))?;
+    let uuid =
+        uuid::Uuid::parse_str(id).map_err(|e| Error::InvalidTunnelId(format!("{id:?}: {e}")))?;
     Ok(*uuid.as_bytes())
 }
 
