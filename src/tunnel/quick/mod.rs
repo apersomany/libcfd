@@ -1,10 +1,11 @@
 //! Quick tunnel identity and the trycloudflare.com HTTP API client.
 
+mod api;
+
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api;
 use crate::error::{Error, Result};
 
 use super::parse_tunnel_id;

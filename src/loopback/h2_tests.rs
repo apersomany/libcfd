@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use crate::h2::H2EdgeConnection;
-use crate::h2::stream::H2Bidi;
+use crate::edge::h2::H2EdgeConnection;
+use crate::edge::h2::stream::H2Bidi;
 use crate::origin::{Body, Origin, Request, Response};
 use crate::tunnel::Tunnel;
 

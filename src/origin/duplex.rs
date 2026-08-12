@@ -5,7 +5,7 @@ use std::task::{Context, Poll};
 
 use futures_util::io::{AsyncRead, AsyncWrite};
 
-use crate::origin::body::Response;
+use crate::origin::http::body::Response;
 
 /// A read-only half of a [`Duplex`].
 pub type ReadHalf = Pin<Box<dyn AsyncRead + Send>>;

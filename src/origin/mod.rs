@@ -4,22 +4,23 @@
 //! Cloudflare edge and produces the response that is sent back. The request
 //! and response types are transport-neutral and runtime-agnostic.
 
-mod body;
 mod duplex;
 mod pump;
-mod traits;
 
 #[cfg(feature = "axum-origin")]
 pub mod axum;
+pub mod http;
+pub mod tcp;
+pub mod websocket;
 
-pub use body::{Body, Request, Response};
+pub use self::http::body::{Body, Request, Response};
 pub use duplex::{Duplex, ReadHalf, WebSocketConnection, WriteHalf};
+pub use http::{HttpOrigin, HttpOriginDyn};
 #[cfg(edge_conn)]
 pub(crate) use pump::pump;
 pub use pump::websocket_accept;
-pub use traits::{
-    HttpOrigin, HttpOriginDyn, TcpOrigin, TcpOriginDyn, WebSocketOrigin, WebSocketOriginDyn,
-};
+pub use tcp::{TcpOrigin, TcpOriginDyn};
+pub use websocket::{WebSocketOrigin, WebSocketOriginDyn};
 
 use std::sync::Arc;
 

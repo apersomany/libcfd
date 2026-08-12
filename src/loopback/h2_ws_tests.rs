@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use crate::h2::H2EdgeConnection;
-use crate::h2::stream::H2Bidi;
+use crate::edge::h2::H2EdgeConnection;
+use crate::edge::h2::stream::H2Bidi;
 use crate::origin::{Body, Origin, Request, Response};
 use crate::tunnel::Tunnel;
 
@@ -124,7 +124,7 @@ async fn h2_websocket_tcp_round_trip() {
         .expect("websocket accept in serialized user headers")
         .to_str()
         .unwrap();
-    let user = crate::h2::headers::deserialize_headers(serialized);
+    let user = crate::edge::h2::headers::deserialize_headers(serialized);
     assert!(
         user.iter()
             .any(|(k, v)| k.eq_ignore_ascii_case("Sec-WebSocket-Accept")

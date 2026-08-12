@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use crate::connector::{EdgeConnector, EdgeOptions, Transport, default_config_json};
+use crate::edge::{EdgeConnector, EdgeOptions, Transport, default_config_json};
 use crate::error::Result;
 use crate::origin::{HttpOrigin, Origin};
 use crate::tunnel::{QuickTunnel, Tunnel};

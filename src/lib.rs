@@ -46,40 +46,25 @@
 //!   `RegistrationFailure`;
 //! - `tracing` is used for diagnostics and no global subscriber is installed.
 
-#[cfg(feature = "quick-tunnel")]
-mod api;
 // The `edge_conn` cfg (any tunnel feature with any edge transport feature) is
 // emitted by build.rs; the transport modules below only compile when a tunnel
-// feature is present because `h2` and `serve` use `crate::control` and
-// `crate::tunnel`, keeping every feature combination buildable.
+// feature is present because `edge::h2` and `edge::serve` use
+// `edge::control` and `crate::tunnel`, keeping every feature combination
+// buildable.
 #[cfg(edge_conn)]
-mod connector;
-#[cfg(edge_conn)]
-mod control;
-#[cfg(edge_conn)]
-mod edge;
+pub mod edge;
 mod error;
-#[cfg(edge_conn)]
-mod event;
-#[cfg(h2_any)]
-mod h2;
 #[cfg(all(feature = "quick-tunnel", any_edge))]
 #[cfg(test)]
 mod loopback;
-mod origin;
-#[cfg(quic_any)]
-mod quic;
-#[cfg(edge_conn)]
-mod roots;
+pub mod origin;
 #[cfg(all(feature = "quick-tunnel", feature = "quic-edge"))]
 mod run;
-#[cfg(quic_any)]
-mod serve;
 #[cfg(any_tunnel)]
-mod tunnel;
+pub mod tunnel;
 
 #[cfg(edge_conn)]
-pub use connector::{EdgeConnector, EdgeOptions, Transport, default_config_json};
+pub use edge::{EdgeConnector, EdgeOptions, Transport, default_config_json};
 pub use error::Error;
 #[cfg(feature = "axum-origin")]
 pub use origin::axum::AxumOrigin;

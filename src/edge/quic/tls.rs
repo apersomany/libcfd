@@ -8,8 +8,8 @@
 use boring::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
 use boring::x509::X509;
 
+use crate::edge::roots;
 use crate::error::Result;
-use crate::roots;
 
 /// Builds a `quiche::Config` for a client connection to the edge.
 pub(crate) fn client_config(ca_cert_pem: Option<&[u8]>) -> Result<quiche::Config> {

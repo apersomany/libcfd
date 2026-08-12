@@ -8,14 +8,14 @@ mod runtime;
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::edge;
-use crate::error::{Error, Result};
-use crate::event::Event;
+use crate::edge::discover_edges;
+use crate::edge::event::Event;
 #[cfg(feature = "h2-edge")]
-use crate::h2::H2EdgeConnection;
-use crate::origin::Origin;
+use crate::edge::h2::H2EdgeConnection;
 #[cfg(feature = "quic-edge")]
-use crate::quic::QuicConnection;
+use crate::edge::quic::QuicConnection;
+use crate::error::{Error, Result};
+use crate::origin::Origin;
 use crate::tunnel::Tunnel;
 
 use options::select_transport;
@@ -80,7 +80,7 @@ impl EdgeConnector {
                 .region
                 .clone()
                 .or_else(|| tunnel.region_override());
-            let edges = match edge::discover_edges(region.as_deref()).await {
+            let edges = match discover_edges(region.as_deref()).await {
                 Ok(edges) => edges,
                 Err(e) => {
                     // Discovery failure is retryable: cloudflared keeps

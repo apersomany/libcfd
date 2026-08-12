@@ -1,7 +1,7 @@
 //! TLS configuration for the HTTP/2 edge connection.
 
+use crate::edge::roots;
 use crate::error::Result;
-use crate::roots;
 
 /// Builds a `rustls::ClientConfig` trusting the system store plus the
 /// Cloudflare origin roots, with an optional user CA appended.

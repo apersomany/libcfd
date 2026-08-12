@@ -6,11 +6,11 @@ use std::time::Duration;
 use libcfd_rpc::quic::{ConnectRequest, ConnectionType};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-use crate::control::{self, RegistrationOptions};
+use crate::edge::control::{self, RegistrationOptions};
+use crate::edge::quic::QuicConnection;
+use crate::edge::serve;
 use crate::error::Result;
 use crate::origin::{Body, Origin, Request, Response};
-use crate::quic::QuicConnection;
-use crate::serve;
 use crate::tunnel::Tunnel;
 
 use super::make_tunnel;

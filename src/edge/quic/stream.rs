@@ -18,7 +18,7 @@ use std::task::{Context, Poll};
 use futures_util::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 
-use crate::quic::Inner;
+use super::Inner;
 
 pub(crate) struct QuicStream {
     inner: Arc<Mutex<Inner>>,

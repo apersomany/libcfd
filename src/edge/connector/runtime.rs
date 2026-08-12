@@ -10,17 +10,17 @@ use std::time::Duration;
 #[cfg(feature = "h2-edge")]
 use tokio::sync::Notify;
 
-use crate::control::{self, RegistrationOptions};
+use crate::edge::control::{self, RegistrationOptions};
+use crate::edge::event::Event;
+#[cfg(feature = "h2-edge")]
+use crate::edge::h2::{H2EdgeConnection, H2Shared};
+#[cfg(feature = "quic-edge")]
+use crate::edge::quic::QuicConnection;
+#[cfg(feature = "quic-edge")]
+use crate::edge::serve;
 use crate::error::Error;
 use crate::error::Result;
-use crate::event::Event;
-#[cfg(feature = "h2-edge")]
-use crate::h2::{H2EdgeConnection, H2Shared};
 use crate::origin::Origin;
-#[cfg(feature = "quic-edge")]
-use crate::quic::QuicConnection;
-#[cfg(feature = "quic-edge")]
-use crate::serve;
 use crate::tunnel::Tunnel;
 
 /// The outcome of a single connection-and-serve attempt.

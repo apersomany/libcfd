@@ -7,9 +7,9 @@ use libcfd_rpc::tunnel::{
     ClientInfo, ConnectionOptions, ConnectionResponse, TunnelAuth, TunnelClient,
 };
 
-use crate::error::{Error, Result};
 #[cfg(feature = "quic-edge")]
-use crate::quic::{QuicConnection, QuicStream};
+use crate::edge::quic::{QuicConnection, QuicStream};
+use crate::error::{Error, Result};
 use crate::tunnel::Tunnel;
 
 /// The duplicate-connection marker the edge returns, mirroring

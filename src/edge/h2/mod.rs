@@ -19,9 +19,9 @@ use std::time::Duration;
 use bytes::Bytes;
 use tokio::net::TcpStream;
 
-use crate::control::{self, RegistrationOptions};
+use crate::edge::control::{self, RegistrationOptions};
+use crate::edge::event::Event;
 use crate::error::{Error, Result};
-use crate::event::Event;
 use crate::origin::Origin;
 use crate::tunnel::Tunnel;
 

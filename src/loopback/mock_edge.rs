@@ -12,8 +12,8 @@ use libcfd_rpc::quic::{
 use tokio::net::UdpSocket;
 use tokio::sync::{Notify, watch};
 
+use crate::edge::quic::{Inner, QuicStream, drive};
 use crate::error::{Error, Result};
-use crate::quic::{Inner, QuicStream, drive};
 
 pub(crate) struct MockEdge {
     inner: Arc<Mutex<Inner>>,

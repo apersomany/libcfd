@@ -12,9 +12,9 @@ use libcfd_rpc::quic::{
     read_connect_request, write_connect_response,
 };
 
+use crate::edge::quic::{QuicConnection, QuicStream};
 use crate::error::{Error, Result};
 use crate::origin::{Body, Origin, Request, Response, pump};
-use crate::quic::{QuicConnection, QuicStream};
 
 const HEADER_KEY_PREFIX: &str = "HttpHeader:";
 /// Max bytes drained from an unread request body after the handler returns.

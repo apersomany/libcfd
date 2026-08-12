@@ -7,10 +7,10 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-use crate::control::RegistrationOptions;
+use crate::edge::control::RegistrationOptions;
+use crate::edge::event::Event;
+use crate::edge::h2::H2Shared;
 use crate::error::Result;
-use crate::event::Event;
-use crate::h2::H2Shared;
 use crate::origin::{Body, Duplex, Origin, Request, Response, WebSocketConnection};
 use crate::tunnel::Tunnel;
 

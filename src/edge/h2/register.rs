@@ -6,7 +6,7 @@ use bytes::Bytes;
 use h2::RecvStream;
 use h2::server::SendResponse;
 
-use crate::control::{self};
+use super::control;
 use crate::error::{Error, Result};
 
 use super::H2Shared;
