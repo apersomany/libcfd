@@ -346,7 +346,7 @@ fn retry_delay(retries: u32, base: Duration) -> Duration {
         return Duration::ZERO;
     }
     let mut buf = [0u8; 8];
-    let _ = boring::rand::rand_bytes(&mut buf);
+    let _ = getrandom::fill(&mut buf);
     let nanos = u64::from_le_bytes(buf) % max_nanos;
     Duration::from_nanos(nanos)
 }

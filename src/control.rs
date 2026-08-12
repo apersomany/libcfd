@@ -69,7 +69,7 @@ fn connector_client_id() -> &'static [u8; 16] {
     static CLIENT_ID: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
     CLIENT_ID.get_or_init(|| {
         let mut id = [0u8; 16];
-        let _ = boring::rand::rand_bytes(&mut id);
+        let _ = getrandom::fill(&mut id);
         id
     })
 }

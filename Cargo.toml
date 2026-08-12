@@ -9,39 +9,55 @@ edition = "2024"
 [features]
 default = ["quick-tunnel", "named-tunnel", "quic-edge", "h2-edge"]
 # Quick Tunnel support: the trycloudflare.com HTTP API client and `QuickTunnel`.
-quick-tunnel = []
+quick-tunnel = [
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:rustls-pki-types",
+    "dep:webpki-roots",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:uuid",
+]
 # Named Tunnel support: `NamedTunnel` and the credentials-file loader.
-named-tunnel = []
-# QUIC edge transport (quiche).
-quic-edge = []
+named-tunnel = ["dep:serde", "dep:serde_json", "dep:uuid"]
+# QUIC edge transport (quiche, with its boringssl backend via `boring`).
+quic-edge = ["dep:quiche", "dep:boring"]
 # HTTP/2 edge transport.
-h2-edge = []
+h2-edge = [
+    "dep:h2",
+    "dep:bytes",
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:rustls-pki-types",
+    "dep:serde_json",
+]
 # Adapter letting an axum Router serve as an HttpOrigin (HTTP only; see docs).
-axum-origin = ["dep:axum", "dep:tower"]
+axum-origin = ["dep:axum", "dep:tower", "dep:bytes"]
 
 [dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"], optional = true }
 base64 = "0.23.1"
-boring = "4.22"
-bytes = "1.12.1"
+boring = { version = "4.22", optional = true }
+bytes = { version = "1.12.1", optional = true }
 futures-io = "0.3.34"
 futures-util = { version = "0.3.34", features = ["io"] }
-h2 = "0.4.15"
+getrandom = "0.4"
+h2 = { version = "0.4.15", optional = true }
 http = "1.5.0"
 libcfd-rpc = { version = "0.1.0", path = "rpc" }
-quiche = "0.29.3"
-rustls = "0.23.43"
-rustls-pki-types = "1.15.1"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+quiche = { version = "0.29.3", optional = true }
+rustls = { version = "0.23.43", optional = true }
+rustls-pki-types = { version = "1.15.1", optional = true }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.151", optional = true }
 sha1 = "0.11.0"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", default-features = false, features = ["net", "rt", "time", "io-util", "sync", "macros", "fs"] }
-tokio-rustls = "0.26.4"
+tokio-rustls = { version = "0.26.4", optional = true }
 tower = { version = "0.5.3", optional = true }
 tracing = "0.1.44"
-uuid = { version = "1.24.0", default-features = false }
-webpki-roots = "1.0.9"
+uuid = { version = "1.24.0", default-features = false, optional = true }
+webpki-roots = { version = "1.0.9", optional = true }
 
 [dev-dependencies]
 rcgen = "0.14.9"
@@ -68,3 +84,7 @@ required-features = ["quick-tunnel", "quic-edge"]
 [[example]]
 name = "axum_tunnel"
 required-features = ["quick-tunnel", "quic-edge", "axum-origin"]
+
+[[test]]
+name = "live_edge"
+required-features = ["quick-tunnel", "quic-edge"]

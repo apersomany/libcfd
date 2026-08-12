@@ -26,6 +26,10 @@ const CREDS_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/.test-creds/quick
 /// How long to keep polling the public hostname for the origin response.
 const POLL_TIMEOUT: Duration = Duration::from_secs(180);
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// How long to wait for a freshly created quick tunnel's hostname to
+/// resolve: DNS propagation behind the public hostname is not instant.
+const DNS_WAIT: Duration = Duration::from_secs(90);
+const DNS_POLL: Duration = Duration::from_secs(2);
 
 fn creds_path() -> std::path::PathBuf {
     Path::new(CREDS_FILE).to_path_buf()
@@ -42,18 +46,43 @@ fn save_creds(tunnel: &QuickTunnel) {
     std::fs::write(creds_path(), json).expect("write credentials file");
 }
 
+async fn hostname_resolves(hostname: &str) -> bool {
+    match tokio::net::lookup_host((hostname, 443)).await {
+        Ok(mut addrs) => addrs.next().is_some(),
+        Err(_) => false,
+    }
+}
+
+async fn wait_for_resolution(hostname: &str) {
+    let deadline = Instant::now() + DNS_WAIT;
+    while Instant::now() < deadline {
+        if hostname_resolves(hostname).await {
+            return;
+        }
+        tokio::time::sleep(DNS_POLL).await;
+    }
+    tracing::warn!(%hostname, "hostname still not resolving after {DNS_WAIT:?}; continuing anyway");
+}
+
 async fn load_or_create_creds() -> QuickTunnel {
     if let Some(tunnel) = load_creds() {
-        tracing::info!("reusing saved quick tunnel credentials");
-        return tunnel;
+        if hostname_resolves(&tunnel.hostname).await {
+            tracing::info!("reusing saved quick tunnel credentials");
+            return tunnel;
+        }
+        // Expired quick tunnels stop resolving; the saved credentials are
+        // stale and cannot be reused.
+        tracing::warn!(hostname = %tunnel.hostname, "saved quick tunnel no longer resolves; discarding");
+        std::fs::remove_file(creds_path()).ok();
     }
-    tracing::info!("no saved credentials, creating a quick tunnel");
+    tracing::info!("no usable credentials, creating a quick tunnel");
     let options = QuickTunnelOptions::default();
     let tunnel = create_quick_tunnel(&options)
         .await
         .expect("quick tunnel API should create a tunnel");
     save_creds(&tunnel);
-    tracing::info!("created and saved quick tunnel credentials");
+    tracing::info!(hostname = %tunnel.hostname, "created and saved quick tunnel credentials; waiting for DNS");
+    wait_for_resolution(&tunnel.hostname).await;
     tunnel
 }
 

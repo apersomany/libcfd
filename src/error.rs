@@ -54,18 +54,21 @@ impl From<String> for Error {
     }
 }
 
+#[cfg(feature = "quic-edge")]
 impl From<boring::error::ErrorStack> for Error {
     fn from(err: boring::error::ErrorStack) -> Self {
         Self::Tls(err.to_string())
     }
 }
 
+#[cfg(feature = "quic-edge")]
 impl From<quiche::Error> for Error {
     fn from(err: quiche::Error) -> Self {
         Self::Quic(err.to_string())
     }
 }
 
+#[cfg(feature = "h2-edge")]
 impl From<h2::Error> for Error {
     fn from(err: h2::Error) -> Self {
         Self::H2(err.to_string())

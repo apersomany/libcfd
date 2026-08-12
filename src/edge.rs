@@ -283,7 +283,7 @@ fn encode_name(out: &mut Vec<u8>, name: &str) -> io::Result<()> {
 
 fn rand16() -> u16 {
     let mut buf = [0u8; 2];
-    let _ = boring::rand::rand_bytes(&mut buf);
+    let _ = getrandom::fill(&mut buf);
     u16::from_be_bytes(buf)
 }
 
