@@ -92,7 +92,7 @@ pub use origin::{
 pub use run::{RunOptions, run_quick_tunnel};
 #[cfg(feature = "named-tunnel")]
 pub use tunnel::NamedTunnel;
-#[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+#[cfg(any_tunnel)]
 pub use tunnel::Tunnel;
 #[cfg(feature = "quick-tunnel")]
 pub use tunnel::{QuickTunnel, QuickTunnelOptions, create_quick_tunnel};
