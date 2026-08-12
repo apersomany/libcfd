@@ -5,15 +5,11 @@ fn main() {
         "tunnelrpc.capnp",
         "quic_metadata_protocol.capnp",
     ] {
-        let request = capnpc_embedded::CompileCommand::new()
-            .file(format!("schemas/{schema}"))
+        capnpc::CompilerCommand::new()
             .src_prefix("schemas")
             .import_path("schemas")
-            .compile()
+            .file(format!("schemas/{schema}"))
+            .run()
             .expect("failed to compile capnp schema");
-        capnpc::codegen::CodeGenerationCommand::new()
-            .output_directory(std::env::var("OUT_DIR").unwrap())
-            .run(&request[..])
-            .expect("failed to generate code");
     }
 }

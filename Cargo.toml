@@ -3,7 +3,7 @@ members = ["rpc"]
 
 [package]
 name = "libcfd"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [features]
@@ -35,34 +35,34 @@ h2-edge = [
 axum-origin = ["dep:axum", "dep:tower", "dep:bytes"]
 
 [dependencies]
-axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"], optional = true }
-base64 = "0.23.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
+base64 = "0.23"
 boring = { version = "4.22", optional = true }
-bytes = { version = "1.12.1", optional = true }
-futures-io = "0.3.34"
-futures-util = { version = "0.3.34", features = ["io"] }
+bytes = { version = "1.12", optional = true }
+futures-io = "0.3"
+futures-util = { version = "0.3", features = ["io"] }
 getrandom = "0.4"
-h2 = { version = "0.4.15", optional = true }
-http = "1.5.0"
-libcfd-rpc = { version = "0.1.0", path = "rpc" }
-quiche = { version = "0.29.3", optional = true }
-rustls = { version = "0.23.43", optional = true }
-rustls-pki-types = { version = "1.15.1", optional = true }
-serde = { version = "1.0.229", features = ["derive"], optional = true }
-serde_json = { version = "1.0.151", optional = true }
-sha1 = "0.11.0"
-thiserror = "2.0.20"
-tokio = { version = "1.53.1", default-features = false, features = ["net", "rt", "time", "io-util", "sync", "macros", "fs"] }
-tokio-rustls = { version = "0.26.4", optional = true }
-tower = { version = "0.5.3", optional = true }
-tracing = "0.1.44"
-uuid = { version = "1.24.0", default-features = false, optional = true }
-webpki-roots = { version = "1.0.9", optional = true }
+h2 = { version = "0.4", optional = true }
+http = "1.5"
+libcfd-rpc = { version = "0.2.0", path = "rpc" }
+quiche = { version = "0.29", optional = true }
+rustls = { version = "0.23", optional = true }
+rustls-pki-types = { version = "1.15", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+sha1 = "0.11"
+thiserror = "2.0"
+tokio = { version = "1.53", default-features = false, features = ["net", "rt", "time", "io-util", "sync", "macros", "fs"] }
+tokio-rustls = { version = "0.26", optional = true }
+tower = { version = "0.5", optional = true }
+tracing = "0.1"
+uuid = { version = "1.24", default-features = false, optional = true }
+webpki-roots = { version = "1.0", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "signal"] }
-tokio-util = { version = "0.7.19", features = ["compat"] }
-tracing-subscriber = "0.3.23"
+tokio = { version = "1.53", features = ["rt-multi-thread", "signal"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tracing-subscriber = "0.3"
 
 [[example]]
 name = "quick_tunnel"

@@ -60,6 +60,7 @@
               cmake
               go
               libclang
+              capnproto
               glibc.dev
               cargo-deny
               cargo-edit
