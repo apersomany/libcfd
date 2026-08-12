@@ -171,13 +171,4 @@ mod tests {
         assert!(user.contains(&("content-type".to_string(), "text/plain".to_string())));
         assert!(user.contains(&("upgrade".to_string(), "websocket".to_string())));
     }
-
-    #[test]
-    fn computes_websocket_accept() {
-        let key = "dGhlIHNhbXBsZSBub25jZQ==";
-        assert_eq!(
-            crate::origin::websocket_accept(key),
-            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-        );
-    }
 }

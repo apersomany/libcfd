@@ -13,6 +13,9 @@ mod mock_edge;
 #[cfg(feature = "quic-edge")]
 mod quic_tests;
 
+use libcfd_rpc::Incoming;
+
+use crate::error::Result;
 use crate::tunnel::QuickTunnel;
 
 // Genuine capnp-go replies, byte-identical to libcfd-rpc's verified goldens.
@@ -34,5 +37,37 @@ fn make_tunnel() -> QuickTunnel {
         hostname: "test.trycloudflare.com".into(),
         account_tag: "test-account".into(),
         secret: (1..=16).collect(),
+    }
+}
+
+/// Answers the registration RPC on a control stream (QUIC stream 0 or the
+/// HTTP/2 control-stream request body) with the golden edge replies, shared
+/// by the quic and h2 mock edges. Returns when the exchange completes or
+/// the client closes the stream.
+pub(crate) async fn serve_control<S: libcfd_rpc::AsyncStream + Unpin>(mut stream: S) -> Result<()> {
+    loop {
+        let incoming = match libcfd_rpc::read_incoming(&mut stream).await? {
+            Some(m) => m,
+            None => return Ok(()),
+        };
+        match incoming {
+            Incoming::Bootstrap { .. } => {
+                libcfd_rpc::io::write_raw(&mut stream, &hex(BOOTSTRAP_RETURN)).await?;
+            }
+            Incoming::Call { method_id: 0, .. } => {
+                libcfd_rpc::io::write_raw(&mut stream, &hex(REGISTER_RETURN)).await?;
+            }
+            Incoming::Call { method_id: 1, .. } => {
+                libcfd_rpc::io::write_raw(&mut stream, &hex(EMPTY_RETURN)).await?;
+                return Ok(());
+            }
+            Incoming::Call { method_id: 2, .. } => {
+                libcfd_rpc::io::write_raw(&mut stream, &hex(EMPTY_RETURN)).await?;
+                return Ok(());
+            }
+            Incoming::Finish { .. } => {}
+            Incoming::Release => return Ok(()),
+            other => panic!("mock edge: unexpected control message {other:?}"),
+        }
     }
 }

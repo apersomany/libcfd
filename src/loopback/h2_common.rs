@@ -4,7 +4,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use libcfd_rpc::Incoming;
 use tokio::sync::Notify;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -12,11 +11,8 @@ use crate::control::RegistrationOptions;
 use crate::error::Result;
 use crate::event::Event;
 use crate::h2::H2Shared;
-use crate::h2::stream::H2Bidi;
 use crate::origin::{Body, Duplex, Origin, Request, Response, WebSocketConnection};
 use crate::tunnel::Tunnel;
-
-use super::{BOOTSTRAP_RETURN, EMPTY_RETURN, REGISTER_RETURN, hex};
 
 /// Generates a self-signed cert and binds the loopback listener the mock
 /// edge accepts on.
@@ -38,43 +34,6 @@ pub(crate) async fn start_edge() -> (tokio::net::TcpListener, Vec<u8>, tokio_rus
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     (listener, ca_pem, acceptor)
-}
-
-/// Answers the registration RPC calls on the mock-edge control stream and
-/// closes it once unregistration/config-push completes.
-pub(crate) async fn run_control_rpc(mut bidi: H2Bidi) {
-    loop {
-        match libcfd_rpc::read_incoming(&mut bidi)
-            .await
-            .expect("read incoming")
-        {
-            Some(Incoming::Bootstrap { .. }) => {
-                libcfd_rpc::io::write_raw(&mut bidi, &hex(BOOTSTRAP_RETURN))
-                    .await
-                    .unwrap();
-            }
-            Some(Incoming::Call { method_id: 0, .. }) => {
-                libcfd_rpc::io::write_raw(&mut bidi, &hex(REGISTER_RETURN))
-                    .await
-                    .unwrap();
-            }
-            Some(Incoming::Call { method_id: 2, .. }) => {
-                libcfd_rpc::io::write_raw(&mut bidi, &hex(EMPTY_RETURN))
-                    .await
-                    .unwrap();
-                break;
-            }
-            Some(Incoming::Call { method_id: 1, .. }) => {
-                libcfd_rpc::io::write_raw(&mut bidi, &hex(EMPTY_RETURN))
-                    .await
-                    .unwrap();
-                break;
-            }
-            Some(_) => {}
-            None => panic!("control stream ended during registration"),
-        }
-    }
-    drop(bidi);
 }
 
 /// Builds the shared state for a loopback h2 serve, returning it with the

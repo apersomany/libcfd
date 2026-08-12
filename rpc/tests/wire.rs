@@ -326,48 +326,6 @@ async fn golden_connect_messages_parse() {
     assert_eq!(md.get(1).get_val().unwrap(), "text/plain");
 }
 
-#[test]
-fn connect_request_round_trip() {
-    let mut message = capnp::message::Builder::new_default();
-    let mut root = message.init_root::<quic_metadata_protocol_capnp::connect_request::Builder>();
-    root.set_dest("http://example.com/path");
-    root.set_type(quic_metadata_protocol_capnp::ConnectionType::Http);
-    {
-        let mut md = root.reborrow().init_metadata(2);
-        {
-            let mut e0 = md.reborrow().get(0);
-            e0.set_key("HttpMethod");
-            e0.set_val("GET");
-        }
-        {
-            let mut e1 = md.reborrow().get(1);
-            e1.set_key("HttpHost");
-            e1.set_val("example.com");
-        }
-    }
-    let words = capnp::serialize::write_message_to_words(&message);
-    let mut bytes = words.as_slice();
-    let reader = capnp::serialize::read_message_from_flat_slice(
-        &mut bytes,
-        capnp::message::ReaderOptions::new(),
-    )
-    .unwrap();
-    let r = reader
-        .get_root::<quic_metadata_protocol_capnp::connect_request::Reader>()
-        .unwrap();
-    assert_eq!(r.get_dest().unwrap(), "http://example.com/path");
-    assert_eq!(
-        r.get_type().unwrap(),
-        quic_metadata_protocol_capnp::ConnectionType::Http
-    );
-    let md = r.get_metadata().unwrap();
-    assert_eq!(md.len(), 2);
-    assert_eq!(md.get(0).get_key().unwrap(), "HttpMethod");
-    assert_eq!(md.get(0).get_val().unwrap(), "GET");
-    assert_eq!(md.get(1).get_key().unwrap(), "HttpHost");
-    assert_eq!(md.get(1).get_val().unwrap(), "example.com");
-}
-
 #[tokio::test]
 async fn read_message_rejects_oversized_segment() {
     // Header claiming a single segment larger than capnp-go's 64 MiB

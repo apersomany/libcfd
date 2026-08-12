@@ -8,8 +8,8 @@ use crate::h2::stream::H2Bidi;
 use crate::origin::{Body, Origin, Request, Response};
 use crate::tunnel::Tunnel;
 
-use super::h2_common::{run_control_rpc, start_edge, test_shared};
-use super::make_tunnel;
+use super::h2_common::{start_edge, test_shared};
+use super::{make_tunnel, serve_control};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn h2_tunnel_end_to_end() {
@@ -43,7 +43,9 @@ async fn h2_tunnel_end_to_end() {
         let response = response_future.await.expect("control response");
         assert_eq!(response.status(), http::StatusCode::OK);
         let (_, recv) = response.into_parts();
-        run_control_rpc(H2Bidi::new(recv, send)).await;
+        serve_control(H2Bidi::new(recv, send))
+            .await
+            .expect("control rpc");
 
         let request = http::Request::builder()
             .method("GET")

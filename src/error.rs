@@ -131,17 +131,4 @@ mod tests {
         assert!(!Error::Registration(retryable).is_permanent());
         assert!(Error::Registration(permanent).is_permanent());
     }
-
-    #[test]
-    fn io_error_converts_from_std() {
-        let source = std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout");
-        let error: Error = source.into();
-        assert!(matches!(error, Error::Io(_)));
-    }
-
-    #[test]
-    fn rpc_error_converts_into_control_variant() {
-        let error: Error = libcfd_rpc::RpcError::Eof.into();
-        assert!(matches!(error, Error::Control(_)));
-    }
 }

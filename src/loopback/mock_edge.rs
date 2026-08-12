@@ -5,7 +5,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
-use libcfd_rpc::Incoming;
 use libcfd_rpc::quic::{
     ConnectRequest, ConnectResponse, ConnectionType, DATA_STREAM_PROTOCOL_SIGNATURE, PROTOCOL_V1,
     read_connect_response, write_connect_request,
@@ -15,8 +14,6 @@ use tokio::sync::{Notify, watch};
 
 use crate::error::{Error, Result};
 use crate::quic::{Inner, QuicStream, drive};
-
-use super::{BOOTSTRAP_RETURN, EMPTY_RETURN, REGISTER_RETURN, hex};
 
 pub(crate) struct MockEdge {
     inner: Arc<Mutex<Inner>>,
@@ -109,35 +106,7 @@ impl MockEdge {
     /// Serves the registration RPC on the control stream (id 0) until the
     /// configuration push completes.
     pub(crate) async fn serve_control(&self) -> Result<()> {
-        let mut stream = self.stream(0);
-        loop {
-            let incoming = match libcfd_rpc::read_incoming(&mut stream).await? {
-                Some(m) => m,
-                None => return Ok(()),
-            };
-            match incoming {
-                Incoming::Bootstrap { .. } => {
-                    libcfd_rpc::io::write_raw(&mut stream, &hex(BOOTSTRAP_RETURN)).await?;
-                }
-                Incoming::Call { method_id: 0, .. } => {
-                    libcfd_rpc::io::write_raw(&mut stream, &hex(REGISTER_RETURN)).await?;
-                }
-                Incoming::Call { method_id: 2, .. } => {
-                    libcfd_rpc::io::write_raw(&mut stream, &hex(EMPTY_RETURN)).await?;
-                    return Ok(());
-                }
-                Incoming::Call { method_id: 1, .. } => {
-                    return Ok(());
-                }
-                Incoming::Finish { .. } => {}
-                Incoming::Release => return Ok(()),
-                other => {
-                    return Err(Error::Quic(format!(
-                        "mock edge: unexpected control message {other:?}"
-                    )));
-                }
-            }
-        }
+        super::serve_control(self.stream(0)).await
     }
 
     /// Opens a raw stream (websocket/tcp), sends a ConnectRequest, reads the
