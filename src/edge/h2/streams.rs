@@ -10,6 +10,8 @@ use h2::server::SendResponse;
 use crate::error::{Error, Result};
 use crate::origin::{Body, Request, Response, pump};
 
+use libcfd_rpc::CloudflaredHandler;
+
 use super::H2Shared;
 use super::StreamType;
 use super::classify;
@@ -26,7 +28,7 @@ pub(crate) async fn handle_stream(
         StreamType::Http => handle_h2_http(request, respond, shared).await,
         StreamType::Websocket => handle_h2_websocket(request, respond, shared).await,
         StreamType::Tcp => handle_h2_tcp(request, respond, shared).await,
-        StreamType::Configuration => handle_h2_configuration(request, respond).await,
+        StreamType::Configuration => handle_h2_configuration(request, respond, shared).await,
         StreamType::Control => Ok(()),
     }
 }
@@ -123,17 +125,35 @@ async fn handle_h2_tcp(
 async fn handle_h2_configuration(
     request: http::Request<RecvStream>,
     mut respond: SendResponse<Bytes>,
+    shared: Arc<H2Shared>,
 ) -> Result<()> {
+    #[derive(serde::Deserialize)]
+    struct ConfigurationUpdateBody {
+        version: i32,
+        config: serde_json::Value,
+    }
     let (_, body) = request.into_parts();
     let mut reader = RecvStreamReader::new(body);
     let mut data = Vec::new();
     reader.read_to_end(&mut data).await?;
-    let version = serde_json::from_slice::<serde_json::Value>(&data)
-        .ok()
-        .and_then(|v| v.get("version").and_then(|v| v.as_i64()))
-        .unwrap_or(0);
-    // libcfd tunnels are locally managed; acknowledge without applying.
-    let reply = format!(r#"{{"lastAppliedVersion":{version},"err":null}}"#);
+    let parsed = serde_json::from_slice::<ConfigurationUpdateBody>(&data);
+    let response = match parsed {
+        Ok(body) => {
+            let config = serde_json::to_vec(&body.config).map_err(|e| Error::h2(e.to_string()))?;
+            shared
+                .config_handler
+                .update_configuration(body.version, &config)
+        }
+        Err(e) => libcfd_rpc::UpdateConfigurationResponse {
+            latest_applied_version: -1,
+            error: format!("config update body is not valid JSON: {e}"),
+        },
+    };
+    let reply = serde_json::to_string(&serde_json::json!({
+        "latestAppliedVersion": response.latest_applied_version,
+        "err": response.error,
+    }))
+    .map_err(|e| Error::h2(e.to_string()))?;
     let send = respond.send_response(http::Response::new(()), false)?;
     let mut writer = SendStreamWriter::new(send);
     writer.write_all(reply.as_bytes()).await?;

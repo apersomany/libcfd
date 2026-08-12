@@ -61,7 +61,7 @@ mod run;
 pub mod tunnel;
 
 #[cfg(edge_conn)]
-pub use edge::{EdgeConnector, EdgeOptions, Transport, default_config_json};
+pub use edge::{EdgeConnector, EdgeOptions, RemoteConfig, Transport, default_config_json};
 pub use error::Error;
 #[cfg(feature = "axum-origin")]
 pub use origin::axum::AxumOrigin;

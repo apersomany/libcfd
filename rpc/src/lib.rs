@@ -7,6 +7,8 @@
 //! main `libcfd` crate interacts with tunnel registration exclusively through
 //! the typed [`tunnel::TunnelClient`] facade.
 
+/// Server side of the edge's `CloudflaredServer` calls.
+pub mod cloudflared;
 /// RPC errors.
 pub mod error;
 /// Stream framing and message I/O.
@@ -39,6 +41,9 @@ pub mod quic_metadata_protocol_capnp {
     include!(concat!(env!("OUT_DIR"), "/quic_metadata_protocol_capnp.rs"));
 }
 
+pub use cloudflared::{
+    CloudflaredHandler, RegisterUdpSessionResponse, UpdateConfigurationResponse, serve_cloudflared,
+};
 pub use error::RpcError;
 pub use io::AsyncStream;
 pub use quic::{

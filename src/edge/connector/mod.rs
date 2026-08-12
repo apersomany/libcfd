@@ -125,6 +125,7 @@ impl EdgeConnector {
                                 config_json: self.options.config_json.clone(),
                                 grace_period: self.options.grace_period,
                                 attempt,
+                                on_remote_config: self.options.on_remote_config.clone(),
                             })
                             .await
                     } => result,

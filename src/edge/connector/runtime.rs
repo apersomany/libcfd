@@ -10,6 +10,7 @@ use std::time::Duration;
 #[cfg(feature = "h2-edge")]
 use tokio::sync::Notify;
 
+use crate::edge::config::EdgeConfigHandler;
 use crate::edge::control::{self, RegistrationOptions};
 use crate::edge::event::Event;
 #[cfg(feature = "h2-edge")]
@@ -56,6 +57,7 @@ pub(crate) struct EdgeRunParams {
     pub config_json: Vec<u8>,
     pub grace_period: Duration,
     pub attempt: u32,
+    pub on_remote_config: Option<Arc<dyn Fn(crate::edge::RemoteConfig) + Send + Sync>>,
 }
 
 /// A transport-agnostic edge connection.
@@ -92,6 +94,7 @@ async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAtte
         config_json,
         grace_period,
         attempt,
+        on_remote_config,
     } = params;
     // cloudflared sends the edge address as the QUIC `originLocalIp`.
     let reg_opts = RegistrationOptions {
@@ -109,10 +112,17 @@ async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAtte
         Ok(Err(e)) => return ServeAttempt::failed(e),
         Err(_) => return ServeAttempt::failed(Error::quic("registration timed out")),
     };
+    tracing::info!(
+        tunnel_is_remotely_managed = _details.tunnel_is_remotely_managed,
+        location = %_details.location_name,
+        "registered with the edge"
+    );
     let registered_at = Some(std::time::Instant::now());
 
     let conn = Arc::new(*conn);
-    let mut serve_handle = tokio::spawn(serve::serve_requests(conn.clone(), origin));
+    let config_handler = Arc::new(EdgeConfigHandler::new(on_remote_config));
+    let mut serve_handle =
+        tokio::spawn(serve::serve_requests(conn.clone(), origin, config_handler));
 
     let serve_result = tokio::select! {
         _ = shutdown.notified() => None,
@@ -162,6 +172,7 @@ async fn run_h2(conn: Box<H2EdgeConnection>, params: EdgeRunParams) -> ServeAtte
         config_json,
         grace_period,
         attempt,
+        on_remote_config,
         ..
     } = params;
     let reg_opts = RegistrationOptions {
@@ -176,6 +187,7 @@ async fn run_h2(conn: Box<H2EdgeConnection>, params: EdgeRunParams) -> ServeAtte
         origin,
         reg_opts: Arc::new(reg_opts),
         config_json: Arc::new(config_json),
+        config_handler: Arc::new(EdgeConfigHandler::new(on_remote_config)),
         shutdown: shutdown.clone(),
         control_shutdown: Arc::new(Notify::new()),
         registered,

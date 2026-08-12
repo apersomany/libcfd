@@ -19,6 +19,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use tokio::net::TcpStream;
 
+use crate::edge::config::EdgeConfigHandler;
 use crate::edge::control::{self, RegistrationOptions};
 use crate::edge::event::Event;
 use crate::error::{Error, Result};
@@ -42,6 +43,7 @@ pub(crate) struct H2Shared {
     pub origin: Arc<Origin>,
     pub reg_opts: Arc<RegistrationOptions>,
     pub config_json: Arc<Vec<u8>>,
+    pub config_handler: Arc<EdgeConfigHandler>,
     pub shutdown: Arc<Event>,
     pub control_shutdown: Arc<tokio::sync::Notify>,
     /// Fires once registration completes on the control stream.

@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
@@ -45,10 +46,60 @@ impl NamedTunnel {
         Ok(tunnel)
     }
 
+    /// Parses a Cloudflare dashboard connector token into tunnel
+    /// credentials.
+    ///
+    /// The token is what the Zero Trust dashboard shows for
+    /// `cloudflared tunnel run --token`: a standard-base64 JSON payload with
+    /// compact keys `a` (account tag), `s` (secret, base64) and `t` (tunnel
+    /// id), plus an optional `e` endpoint, matching cloudflared's
+    /// `connection.TunnelToken` layout. The secret is never logged.
+    pub fn from_token(token: &str) -> Result<NamedTunnel> {
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(token)
+            .map_err(|e| {
+                Error::named_tunnel_credentials(format!("token is not valid base64: {e}"))
+            })?;
+        let payload: TokenPayload = serde_json::from_slice(&raw).map_err(|e| {
+            Error::named_tunnel_credentials(format!("token payload is not valid JSON: {e}"))
+        })?;
+        let secret = base64::engine::general_purpose::STANDARD
+            .decode(&payload.secret)
+            .map_err(|e| {
+                Error::named_tunnel_credentials(format!("token secret is not valid base64: {e}"))
+            })?;
+        let tunnel = NamedTunnel {
+            account_tag: payload.account_tag,
+            tunnel_secret: secret,
+            tunnel_id: payload.tunnel_id,
+            endpoint: payload.endpoint,
+        };
+        if tunnel.account_tag.is_empty() || tunnel.tunnel_secret.is_empty() {
+            return Err(Error::named_tunnel_credentials(
+                "token payload is missing the account tag or secret",
+            ));
+        }
+        parse_tunnel_id(&tunnel.tunnel_id)?;
+        Ok(tunnel)
+    }
+
     /// The 16-byte tunnel id.
     pub fn tunnel_id_bytes(&self) -> Result<[u8; 16]> {
         parse_tunnel_id(&self.tunnel_id)
     }
+}
+
+/// The compact JSON shape of a dashboard connector token.
+#[derive(Deserialize)]
+struct TokenPayload {
+    #[serde(rename = "a")]
+    account_tag: String,
+    #[serde(rename = "s")]
+    secret: String,
+    #[serde(rename = "t")]
+    tunnel_id: String,
+    #[serde(rename = "e", default)]
+    endpoint: Option<String>,
 }
 
 #[cfg(test)]
@@ -76,5 +127,39 @@ mod tests {
         assert_eq!(back.account_tag, "abc123");
         assert_eq!(back.tunnel_secret, b"top-secret");
         assert_eq!(back.tunnel_id, "550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn named_tunnel_token_parses_compact_payload() {
+        let payload = br#"{"a":"abc123","s":"dG9wLXNlY3JldA==","t":"550e8400-e29b-41d4-a716-446655440000","e":"us-east-1"}"#;
+        let token = base64::engine::general_purpose::STANDARD.encode(payload);
+        let tunnel = NamedTunnel::from_token(&token).unwrap();
+        assert_eq!(tunnel.account_tag, "abc123");
+        assert_eq!(tunnel.tunnel_secret, b"top-secret");
+        assert_eq!(tunnel.tunnel_id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(tunnel.endpoint.as_deref(), Some("us-east-1"));
+        assert_eq!(tunnel.tunnel_id_bytes().unwrap().len(), 16);
+    }
+
+    #[test]
+    fn named_tunnel_token_endpoint_is_optional() {
+        let payload =
+            br#"{"a":"abc123","s":"dG9wLXNlY3JldA==","t":"550e8400-e29b-41d4-a716-446655440000"}"#;
+        let token = base64::engine::general_purpose::STANDARD.encode(payload);
+        let tunnel = NamedTunnel::from_token(&token).unwrap();
+        assert_eq!(tunnel.account_tag, "abc123");
+        assert_eq!(tunnel.tunnel_secret, b"top-secret");
+        assert_eq!(tunnel.endpoint, None);
+    }
+
+    #[test]
+    fn named_tunnel_token_rejects_malformed_input() {
+        assert!(NamedTunnel::from_token("not base64!").is_err());
+        let payload = br#"{"a":"abc123","s":"dG9wLXNlY3JldA==","t":"not-a-uuid"}"#;
+        let token = base64::engine::general_purpose::STANDARD.encode(payload);
+        assert!(NamedTunnel::from_token(&token).is_err());
+        let payload = br#"{"a":"","s":"","t":"550e8400-e29b-41d4-a716-446655440000"}"#;
+        let token = base64::engine::general_purpose::STANDARD.encode(payload);
+        assert!(NamedTunnel::from_token(&token).is_err());
     }
 }

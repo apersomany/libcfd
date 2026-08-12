@@ -13,7 +13,7 @@ LibCFD intends to be a lightweight, programmable replacement for cloudflared and
 Current version: 0.2.0. The supported feature set is:
 
 - [x] Quick tunnels (trycloudflare.com HTTP API)
-- [x] Named tunnels (cloudflared credentials file)
+- [x] Named tunnels (cloudflared credentials file or dashboard connector token; routed hostnames discovered from the edge's remote-configuration push via `EdgeOptions::on_remote_config`)
 - [x] QUIC edge transport (quiche)
 - [x] HTTP/2 edge transport
 - [x] Edge discovery, connection retries, transport selection, and reconnection with exponential backoff
@@ -53,10 +53,11 @@ cargo run --example h2_tunnel
 
 ## Named tunnel
 
-Runs a tunnel from a cloudflared credentials file.
+Runs a tunnel from a cloudflared credentials file or a dashboard connector token (the same token the Zero Trust dashboard shows for `cloudflared tunnel run --token`). For remotely-managed tunnels the edge pushes the tunnel's configuration after registration, so the example discovers the routed public hostnames via RPC and verifies them end-to-end before serving until Ctrl-C.
 
 ```sh
 cargo run --example named_tunnel -- /path/to/credentials.json
+cargo run --example named_tunnel -- <connector-token>
 ```
 
 ## WebSocket and TCP origins

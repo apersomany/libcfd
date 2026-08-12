@@ -1,6 +1,9 @@
 //! Transport selection and connection options.
 
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::edge::RemoteConfig;
 
 /// The transport used for a tunnel connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +20,7 @@ pub enum Transport {
 }
 
 /// Options controlling how a tunnel connects to the edge.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EdgeOptions {
     /// Transport selection policy.
     pub transport: Transport,
@@ -40,6 +43,28 @@ pub struct EdgeOptions {
     /// QUIC failures before `Transport::Auto` falls back to HTTP/2.
     /// Cloudflared's default retry count is 5.
     pub max_quic_failures: u8,
+    /// Called with each configuration the edge pushes for a
+    /// remotely-managed tunnel (e.g. the hostnames routed to it).
+    pub on_remote_config: Option<Arc<dyn Fn(RemoteConfig) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for EdgeOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EdgeOptions")
+            .field("transport", &self.transport)
+            .field("region", &self.region)
+            .field("ca_cert_pem", &self.ca_cert_pem)
+            .field("config_json", &self.config_json)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("backoff", &self.backoff)
+            .field("grace_period", &self.grace_period)
+            .field("max_quic_failures", &self.max_quic_failures)
+            .field(
+                "on_remote_config",
+                &self.on_remote_config.as_ref().map(|_| "<callback>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for EdgeOptions {
@@ -53,6 +78,7 @@ impl Default for EdgeOptions {
             backoff: Duration::from_secs(1),
             grace_period: Duration::from_secs(30),
             max_quic_failures: 5,
+            on_remote_config: None,
         }
     }
 }

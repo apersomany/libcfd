@@ -275,7 +275,9 @@ pub async fn send_exception<S: AsyncStream + Unpin>(
     crate::io::write_raw(stream, &bytes).await
 }
 
-fn build_exception(question_id: u32, reason: &str) -> Result<Vec<u8>> {
+/// Builds the framed bytes for an `unimplemented` exception return,
+/// mirroring what capnp-go sends when a server does not implement a method.
+pub(crate) fn build_exception(question_id: u32, reason: &str) -> Result<Vec<u8>> {
     let mut message = capnp::message::Builder::new_default();
     let root = message.init_root::<rpc_capnp::message::Builder>();
     let mut ret = root.init_return();

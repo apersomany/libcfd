@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
-use libcfd_rpc::Incoming;
 use libcfd_rpc::quic::{
     ConnectRequest, ConnectResponse, ConnectionType, DATA_STREAM_PROTOCOL_SIGNATURE, HTTP_HOST_KEY,
     HTTP_METHOD_KEY, HTTP_STATUS_KEY, PROTOCOL_V1, RPC_STREAM_PROTOCOL_SIGNATURE,
     read_connect_request, write_connect_response,
 };
 
+use crate::edge::config::EdgeConfigHandler;
 use crate::edge::quic::{QuicConnection, QuicStream};
 use crate::error::{Error, Result};
 use crate::origin::{Body, Origin, Request, Response, pump};
@@ -24,7 +24,11 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Accepts incoming streams and dispatches each new data stream to a
 /// per-request task. The control stream (id 0) is skipped. Completed
 /// streams are removed from the active set so it stays bounded.
-pub(crate) async fn serve_requests(conn: Arc<QuicConnection>, origin: Arc<Origin>) -> Result<()> {
+pub(crate) async fn serve_requests(
+    conn: Arc<QuicConnection>,
+    origin: Arc<Origin>,
+    config_handler: Arc<EdgeConfigHandler>,
+) -> Result<()> {
     let mut active = HashSet::new();
     active.insert(0);
     let mut tasks = tokio::task::JoinSet::new();
@@ -47,8 +51,9 @@ pub(crate) async fn serve_requests(conn: Arc<QuicConnection>, origin: Arc<Origin
         for id in new_ids {
             let c = conn.clone();
             let o = origin.clone();
+            let ch = config_handler.clone();
             tasks.spawn(async move {
-                let result = serve_stream(c, o.as_ref(), id).await;
+                let result = serve_stream(c, o.as_ref(), ch.as_ref(), id).await;
                 (id, result)
             });
         }
@@ -72,13 +77,18 @@ pub(crate) async fn serve_requests(conn: Arc<QuicConnection>, origin: Arc<Origin
     }
 }
 
-async fn serve_stream(conn: Arc<QuicConnection>, origin: &Origin, stream_id: u64) -> Result<()> {
+async fn serve_stream(
+    conn: Arc<QuicConnection>,
+    origin: &Origin,
+    config_handler: &EdgeConfigHandler,
+    stream_id: u64,
+) -> Result<()> {
     let mut stream = conn.stream(stream_id);
 
     let mut signature = [0u8; 6];
     stream.read_exact(&mut signature).await?;
     if signature == RPC_STREAM_PROTOCOL_SIGNATURE {
-        return handle_rpc_stream(stream).await;
+        return handle_rpc_stream(stream, config_handler).await;
     }
     if signature != DATA_STREAM_PROTOCOL_SIGNATURE {
         return Err(Error::quic(format!(
@@ -205,20 +215,17 @@ async fn handle_quic_tcp(
     pump(duplex, conn.stream(stream_id), conn.stream(stream_id)).await
 }
 
-/// Handles edge-initiated RPC streams (session and configuration managers).
-/// libcfd does not implement those interfaces, so every call is answered
-/// with an `unimplemented` exception so the edge's RPC client fails cleanly.
-async fn handle_rpc_stream(mut stream: QuicStream) -> Result<()> {
-    loop {
-        match libcfd_rpc::read_incoming(&mut stream).await? {
-            Some(Incoming::Call { question_id, .. })
-            | Some(Incoming::Bootstrap { question_id }) => {
-                libcfd_rpc::send_exception(&mut stream, question_id, "unimplemented").await?;
-            }
-            Some(_) => {}
-            None => return Ok(()),
-        }
-    }
+/// Handles edge-initiated RPC streams: the edge bootstraps the connector's
+/// `CloudflaredServer` interface and calls `updateConfiguration` to push the
+/// remotely-managed tunnel configuration (and UDP session methods, which
+/// libcfd answers with an error).
+async fn handle_rpc_stream(
+    mut stream: QuicStream,
+    config_handler: &EdgeConfigHandler,
+) -> Result<()> {
+    libcfd_rpc::serve_cloudflared(&mut stream, config_handler)
+        .await
+        .map_err(Error::from)
 }
 
 async fn write_stream_error(conn: &QuicConnection, stream_id: u64, message: &str) -> Result<()> {
