@@ -26,10 +26,6 @@ pub const HTTP_HOST_KEY: &str = "HttpHost";
 pub const HTTP_HEADER_KEY: &str = "HttpHeader";
 /// Metadata key carrying the HTTP response status on a data stream.
 pub const HTTP_STATUS_KEY: &str = "HttpStatus";
-/// Metadata key carrying the flow id for datagram streams.
-pub const FLOW_ID_KEY: &str = "FlowID";
-/// Metadata key carrying the Cloudflare trace id.
-pub const TRACE_ID_KEY: &str = "cf-trace-id";
 
 /// The kind of connection the edge requests on a data stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,12 +128,6 @@ pub fn encode_connect_request(
         entry.set_val(val);
     }
     Ok(message)
-}
-
-/// Encodes a `ConnectRequest` as framed message bytes.
-pub fn encode_connect_request_bytes(request: &ConnectRequest) -> Result<Vec<u8>> {
-    let message = encode_connect_request(request)?;
-    Ok(capnp::serialize::write_message_to_words(&message))
 }
 
 /// Writes a `ConnectRequest` message to a stream (used by the mock edge).

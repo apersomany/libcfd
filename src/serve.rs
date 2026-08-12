@@ -193,7 +193,7 @@ async fn handle_quic_tcp(
     let Some(tcp) = &origin.tcp else {
         return write_stream_error(&conn, stream_id, "no tcp origin handler").await;
     };
-    let request = build_tcp_request(&connect);
+    let request = Request::tcp(&connect.dest);
     let duplex = match tcp.connect_boxed(request).await {
         Ok(duplex) => duplex,
         Err(e) => return write_stream_error(&conn, stream_id, &format!("{e}")).await,
@@ -276,16 +276,6 @@ fn build_request(connect: &ConnectRequest) -> Result<Request> {
     let uri = http::Uri::try_from(connect.dest.as_str())
         .map_err(|e| Error::Quic(format!("invalid request dest {:?}: {e}", connect.dest)))?;
     Ok(Request::new(method, uri, headers, Body::empty()))
-}
-
-fn build_tcp_request(connect: &ConnectRequest) -> Request {
-    let uri = http::Uri::try_from(format!("http://{}", connect.dest)).unwrap_or_default();
-    Request::new(
-        http::Method::GET,
-        uri,
-        http::HeaderMap::new(),
-        Body::empty(),
-    )
 }
 
 fn encode_response_metadata(response: &Response) -> Vec<(String, String)> {
@@ -380,7 +370,7 @@ mod tests {
             conn_type: ConnectionType::Tcp,
             metadata: vec![],
         };
-        let request = build_tcp_request(&connect);
+        let request = Request::tcp(&connect.dest);
         assert_eq!(request.uri.to_string(), "http://10.0.0.1:8080/");
     }
 

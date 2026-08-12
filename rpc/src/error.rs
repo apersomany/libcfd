@@ -17,9 +17,6 @@ pub enum RpcError {
         /// The abort type code reported by the peer.
         error_type: u16,
     },
-    /// The peer replied `unimplemented` to one of our messages.
-    #[error("peer does not implement a required rpc message")]
-    Unimplemented,
     /// The peer returned an exception for a call we made.
     #[error("rpc call failed remotely: {0}")]
     RemoteCall(String),

@@ -48,60 +48,37 @@
 
 #[cfg(feature = "quick-tunnel")]
 mod api;
-#[cfg(all(
-    any(feature = "quick-tunnel", feature = "named-tunnel"),
-    any(feature = "quic-edge", feature = "h2-edge")
-))]
+// The `edge_conn` cfg (any tunnel feature with any edge transport feature) is
+// emitted by build.rs; the transport modules below only compile when a tunnel
+// feature is present because `h2` and `serve` use `crate::control` and
+// `crate::tunnel`, keeping every feature combination buildable.
+#[cfg(edge_conn)]
 mod connector;
-#[cfg(all(
-    any(feature = "quick-tunnel", feature = "named-tunnel"),
-    any(feature = "quic-edge", feature = "h2-edge")
-))]
+#[cfg(edge_conn)]
 mod control;
-#[cfg(all(
-    any(feature = "quick-tunnel", feature = "named-tunnel"),
-    any(feature = "quic-edge", feature = "h2-edge")
-))]
+#[cfg(edge_conn)]
 mod edge;
 mod error;
-// The transport modules are only compiled when a tunnel feature is present:
-// `h2` and `serve` use `crate::control`/`crate::tunnel`, and `quic` is only
-// reachable from them. This keeps every feature combination buildable.
-#[cfg(all(
-    any(feature = "quick-tunnel", feature = "named-tunnel"),
-    any(feature = "quic-edge", feature = "h2-edge")
-))]
+#[cfg(edge_conn)]
 mod event;
-#[cfg(all(
-    feature = "h2-edge",
-    any(feature = "quick-tunnel", feature = "named-tunnel")
-))]
+#[cfg(h2_any)]
 mod h2;
+#[cfg(all(feature = "quick-tunnel", any_edge))]
+#[cfg(test)]
+mod loopback;
 mod origin;
-#[cfg(all(
-    feature = "quic-edge",
-    any(feature = "quick-tunnel", feature = "named-tunnel")
-))]
+#[cfg(quic_any)]
 mod quic;
-#[cfg(all(
-    any(feature = "quick-tunnel", feature = "named-tunnel"),
-    any(feature = "quic-edge", feature = "h2-edge")
-))]
+#[cfg(edge_conn)]
 mod roots;
 #[cfg(all(feature = "quick-tunnel", feature = "quic-edge"))]
 mod run;
-#[cfg(all(
-    feature = "quic-edge",
-    any(feature = "quick-tunnel", feature = "named-tunnel")
-))]
+#[cfg(quic_any)]
 mod serve;
-#[cfg(any(feature = "quick-tunnel", feature = "named-tunnel"))]
+#[cfg(any_tunnel)]
 mod tunnel;
 
-#[cfg(all(
-    any(feature = "quick-tunnel", feature = "named-tunnel"),
-    any(feature = "quic-edge", feature = "h2-edge")
-))]
+#[cfg(edge_conn)]
 pub use connector::{EdgeConnector, EdgeOptions, Transport, default_config_json};
 pub use error::Error;
 #[cfg(feature = "axum-origin")]
@@ -119,8 +96,3 @@ pub use tunnel::NamedTunnel;
 pub use tunnel::Tunnel;
 #[cfg(feature = "quick-tunnel")]
 pub use tunnel::{QuickTunnel, QuickTunnelOptions, create_quick_tunnel};
-#[cfg(all(
-    feature = "quick-tunnel",
-    any(feature = "quic-edge", feature = "h2-edge")
-))]
-mod loopback_test;

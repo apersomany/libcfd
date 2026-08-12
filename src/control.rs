@@ -74,6 +74,15 @@ fn connector_client_id() -> &'static [u8; 16] {
     })
 }
 
+/// The local socket IP as 4 or 16 bytes, sent as the registration
+/// `originLocalIp` (cloudflared does the same).
+pub(crate) fn peer_ip_bytes(addr: &std::net::SocketAddr) -> Vec<u8> {
+    match addr.ip() {
+        std::net::IpAddr::V4(ip) => ip.octets().to_vec(),
+        std::net::IpAddr::V6(ip) => ip.octets().to_vec(),
+    }
+}
+
 /// Registers the tunnel with the edge on an open control stream and pushes
 /// the local configuration when the tunnel is not remotely managed.
 ///

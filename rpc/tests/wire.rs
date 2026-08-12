@@ -1,46 +1,10 @@
 use capnp::traits::ImbueMut;
-use core::pin::Pin;
-use core::task::{Context, Poll};
 use futures::io::Cursor;
 use libcfd_rpc::{quic_metadata_protocol_capnp, rpc_capnp, tunnelrpc_capnp};
-use tokio::io::{AsyncRead as _, AsyncWrite as _, AsyncWriteExt as _};
+use tokio::io::AsyncWriteExt as _;
 
-/// Bridges a tokio duplex stream to futures-io traits.
-struct TokioBridge(tokio::io::DuplexStream);
-
-impl futures::io::AsyncRead for TokioBridge {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
-        let mut rb = tokio::io::ReadBuf::new(buf);
-        match Pin::new(&mut self.0).poll_read(cx, &mut rb) {
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(rb.filled().len())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-impl futures::io::AsyncWrite for TokioBridge {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
-    }
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_flush(cx)
-    }
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_shutdown(cx)
-    }
-}
-
-use core::marker::Unpin;
-impl Unpin for TokioBridge {}
+mod common;
+use common::{StubHook, TokioBridge};
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|x| format!("{x:02x}")).collect()
@@ -419,49 +383,5 @@ async fn read_message_rejects_oversized_segment() {
         Err(libcfd_rpc::RpcError::Protocol(_)) => {}
         Err(e) => panic!("expected protocol error, got {e}"),
         Ok(_) => panic!("expected protocol error, got a message"),
-    }
-}
-
-#[derive(Clone)]
-pub struct StubHook;
-impl capnp::private::capability::ClientHook for StubHook {
-    fn add_ref(&self) -> Box<dyn capnp::private::capability::ClientHook> {
-        Box::new(StubHook)
-    }
-    fn new_call(
-        &self,
-        _i: u64,
-        _m: u16,
-        _s: Option<capnp::MessageSize>,
-    ) -> capnp::capability::Request<capnp::any_pointer::Owned, capnp::any_pointer::Owned> {
-        unimplemented!()
-    }
-    fn call(
-        &self,
-        _i: u64,
-        _m: u16,
-        _p: Box<dyn capnp::private::capability::ParamsHook>,
-        _r: Box<dyn capnp::private::capability::ResultsHook>,
-    ) -> capnp::capability::Promise<(), capnp::Error> {
-        unimplemented!()
-    }
-    fn get_brand(&self) -> usize {
-        0
-    }
-    fn get_ptr(&self) -> usize {
-        0
-    }
-    fn get_resolved(&self) -> Option<Box<dyn capnp::private::capability::ClientHook>> {
-        None
-    }
-    fn when_more_resolved(
-        &self,
-    ) -> Option<
-        capnp::capability::Promise<Box<dyn capnp::private::capability::ClientHook>, capnp::Error>,
-    > {
-        None
-    }
-    fn when_resolved(&self) -> capnp::capability::Promise<(), capnp::Error> {
-        capnp::capability::Promise::ok(())
     }
 }
