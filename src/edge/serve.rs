@@ -33,7 +33,7 @@ pub(crate) async fn serve_requests(conn: Arc<QuicConnection>, origin: Arc<Origin
         let new_ids = {
             let g = conn.inner.lock().unwrap();
             if g.closed {
-                return Err(Error::Quic(
+                return Err(Error::quic(
                     g.close_reason
                         .clone()
                         .unwrap_or_else(|| "connection closed".into()),
@@ -81,14 +81,14 @@ async fn serve_stream(conn: Arc<QuicConnection>, origin: &Origin, stream_id: u64
         return handle_rpc_stream(stream).await;
     }
     if signature != DATA_STREAM_PROTOCOL_SIGNATURE {
-        return Err(Error::Quic(format!(
+        return Err(Error::quic(format!(
             "stream {stream_id} has no data-stream signature"
         )));
     }
     let mut version = [0u8; 2];
     stream.read_exact(&mut version).await?;
     if version != PROTOCOL_V1 {
-        return Err(Error::Quic(format!(
+        return Err(Error::quic(format!(
             "stream {stream_id} has unsupported protocol version"
         )));
     }
@@ -140,7 +140,7 @@ async fn handle_quic_http(
         Ok(_) => {}
         Err(e) => {
             cancel_write(&conn, stream_id);
-            return Err(Error::Io(e));
+            return Err(Error::edge_io(e));
         }
     }
     tracing::trace!(stream = stream_id, "response sent");
@@ -274,7 +274,7 @@ fn build_request(connect: &ConnectRequest) -> Result<Request> {
         }
     }
     let uri = http::Uri::try_from(connect.dest.as_str())
-        .map_err(|e| Error::Quic(format!("invalid request dest {:?}: {e}", connect.dest)))?;
+        .map_err(|e| Error::quic(format!("invalid request dest {:?}: {e}", connect.dest)))?;
     Ok(Request::new(method, uri, headers, Body::empty()))
 }
 

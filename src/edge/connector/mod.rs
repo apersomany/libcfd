@@ -8,6 +8,7 @@ mod runtime;
 use std::future::Future;
 use std::sync::Arc;
 
+use crate::edge::Error as EdgeError;
 use crate::edge::discover_edges;
 use crate::edge::event::Event;
 #[cfg(feature = "h2-edge")]
@@ -137,7 +138,7 @@ impl EdgeConnector {
                 let _ = quic_timed_out;
                 match result {
                     Ok(()) => return Ok(()),
-                    Err(Error::DuplicateConnection(_)) => {
+                    Err(Error::Edge(EdgeError::DuplicateConnection(_))) => {
                         tracing::warn!(addr = %edge.addr, "duplicate connection, trying next edge");
                         continue;
                     }
@@ -194,7 +195,7 @@ async fn build_connection(
             let conn =
                 tokio::time::timeout(connect_timeout, QuicConnection::connect(edge, ca_cert_pem))
                     .await
-                    .map_err(|_| Error::Quic("edge connection timed out".into()))??;
+                    .map_err(|_| Error::quic("edge connection timed out"))??;
             Ok(Box::new(conn))
         }
         #[cfg(feature = "h2-edge")]
@@ -204,7 +205,7 @@ async fn build_connection(
                 H2EdgeConnection::connect(edge, ca_cert_pem),
             )
             .await
-            .map_err(|_| Error::H2("edge connection timed out".into()))??;
+            .map_err(|_| Error::h2("edge connection timed out"))??;
             Ok(Box::new(conn))
         }
         #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]

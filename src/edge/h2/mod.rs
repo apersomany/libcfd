@@ -69,18 +69,18 @@ impl H2EdgeConnection {
         let tcp = TcpStream::connect(peer).await?;
         let local_ip = control::peer_ip_bytes(&tcp.local_addr()?);
         let server_name = rustls_pki_types::ServerName::try_from(EDGE_H2_SNI.to_string())
-            .map_err(|e| Error::H2(format!("invalid edge sni: {e}")))?;
+            .map_err(|e| Error::h2(format!("invalid edge sni: {e}")))?;
         let tls = connector
             .connect(server_name, tcp)
             .await
-            .map_err(|e| Error::H2(format!("tls handshake failed: {e}")))?;
+            .map_err(|e| Error::h2(format!("tls handshake failed: {e}")))?;
 
         let mut builder = h2::server::Builder::new();
         builder.max_concurrent_streams(u32::MAX);
         let conn = builder
             .handshake(tls)
             .await
-            .map_err(|e| Error::H2(format!("http2 handshake failed: {e}")))?;
+            .map_err(|e| Error::h2(format!("http2 handshake failed: {e}")))?;
         Ok((
             H2EdgeConnection {
                 conn,
@@ -130,7 +130,7 @@ impl H2EdgeConnection {
                         Some(Err(e)) => {
                             shared.control_shutdown.notify_waiters();
                             stream_tasks.abort_all();
-                            return Err(Error::H2(format!("connection error: {e}")));
+                            return Err(Error::h2(format!("connection error: {e}")));
                         }
                         None => {
                             shared.control_shutdown.notify_waiters();
@@ -151,16 +151,14 @@ impl H2EdgeConnection {
                         Err(_) => {
                             shared.control_shutdown.notify_waiters();
                             stream_tasks.abort_all();
-                            return Err(Error::H2(
-                                "control stream ended before registration".into(),
-                            ));
+                            return Err(Error::h2("control stream ended before registration"));
                         }
                     }
                 }
                 _ = tokio::time::sleep(control::RPC_TIMEOUT), if !reg_done => {
                     shared.control_shutdown.notify_waiters();
                     stream_tasks.abort_all();
-                    return Err(Error::H2("registration timed out".into()));
+                    return Err(Error::h2("registration timed out"));
                 }
                 _ = shared.shutdown.notified() => {
                     shared.control_shutdown.notify_waiters();

@@ -108,7 +108,7 @@ impl QuicConnection {
                 (g.established, g.closed, g.close_reason.clone())
             };
             if state.1 {
-                return Err(Error::Quic(format!(
+                return Err(Error::quic(format!(
                     "connection closed during handshake: {}",
                     state.2.unwrap_or_else(|| "closed".into())
                 )));

@@ -107,7 +107,7 @@ async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAtte
     {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => return ServeAttempt::failed(e),
-        Err(_) => return ServeAttempt::failed(Error::Quic("registration timed out".into())),
+        Err(_) => return ServeAttempt::failed(Error::quic("registration timed out")),
     };
     let registered_at = Some(std::time::Instant::now());
 
@@ -132,9 +132,9 @@ async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAtte
     }
     let result = match serve_result {
         None => Ok(()),
-        Some(Ok(Ok(()))) => Err(Error::Quic("serve loop ended unexpectedly".into())),
+        Some(Ok(Ok(()))) => Err(Error::quic("serve loop ended unexpectedly")),
         Some(Ok(Err(e))) => Err(e),
-        Some(Err(e)) => Err(Error::Quic(format!("serve task failed: {e}"))),
+        Some(Err(e)) => Err(Error::quic(format!("serve task failed: {e}"))),
     };
     ServeAttempt {
         result,
@@ -210,7 +210,7 @@ async fn run_h2(conn: Box<H2EdgeConnection>, params: EdgeRunParams) -> ServeAtte
                 }
                 Ok(Err(e)) => {
                     return ServeAttempt {
-                        result: Err(Error::H2(format!("serve task failed: {e}"))),
+                        result: Err(Error::h2(format!("serve task failed: {e}"))),
                         registered_at,
                         quic_timed_out: false,
                     }
@@ -229,11 +229,11 @@ async fn run_h2(conn: Box<H2EdgeConnection>, params: EdgeRunParams) -> ServeAtte
             if shutdown.is_fired() {
                 Ok(())
             } else {
-                Err(Error::H2("edge closed the connection".into()))
+                Err(Error::h2("edge closed the connection"))
             }
         }
         Some(Ok(Err(e))) => Err(e),
-        Some(Err(e)) => Err(Error::H2(format!("serve task failed: {e}"))),
+        Some(Err(e)) => Err(Error::h2(format!("serve task failed: {e}"))),
     };
     ServeAttempt {
         result,

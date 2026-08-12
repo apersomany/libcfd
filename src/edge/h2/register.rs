@@ -23,7 +23,7 @@ pub(crate) async fn handle_control_stream(
     let send = match respond.send_response(http::Response::new(()), false) {
         Ok(send) => send,
         Err(e) => {
-            let error = Error::H2(format!("control stream response failed: {e}"));
+            let error = Error::h2(format!("control stream response failed: {e}"));
             let _ = reg_tx.send(Err(error));
             return Ok(());
         }

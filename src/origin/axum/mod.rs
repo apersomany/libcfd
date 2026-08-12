@@ -3,13 +3,12 @@
 //!
 //! Only the HTTP path is bridged. Axum's websocket support cannot be
 //! adapted to libcfd's [`WebSocketOrigin`](crate::WebSocketOrigin):
-//! [`WebSocketUpgrade::on_upgrade`](axum::extract::ws::WebSocketUpgrade::on_upgrade)
-//! hands the upgraded connection to a closure that axum drives, so the raw
+//! `WebSocketUpgrade::on_upgrade` hands the upgraded connection to a closure that axum drives, so the raw
 //! byte stream is never exposed to the caller, and axum's `WebSocket` type
 //! is message-framed rather than a raw duplex. Bridging it would require
 //! reimplementing RFC 6455 framing on top of the message API. Raw TCP
-//! proxying is likewise outside axum's HTTP-only model, so [`TcpOrigin`]
-//! (crate::TcpOrigin) has no axum adapter.
+//! proxying is likewise outside axum's HTTP-only model, so `TcpOrigin` has
+//! no axum adapter.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -55,14 +54,14 @@ impl HttpOrigin for AxumOrigin {
             headers.insert(
                 http::header::CONTENT_LENGTH,
                 http::HeaderValue::from_str(&size.to_string())
-                    .map_err(|e| Error::Origin(format!("bad content length: {e}")))?,
+                    .map_err(|e| Error::origin_handler(format!("bad content length: {e}")))?,
             );
         }
         let mut axum_request = http::Request::builder()
             .method(method)
             .uri(uri)
             .body(AxumBody::from_stream(BodyReadStream::new(body)))
-            .map_err(|e| Error::Origin(format!("failed to build axum request: {e}")))?;
+            .map_err(|e| Error::origin_handler(format!("failed to build axum request: {e}")))?;
         *axum_request.headers_mut() = headers;
 
         let mut service = self.router.clone();
@@ -70,7 +69,7 @@ impl HttpOrigin for AxumOrigin {
         // responses.
         let axum_response = tower::Service::call(&mut service, axum_request)
             .await
-            .map_err(|e| Error::Origin(format!("axum router failed: {e}")))?;
+            .map_err(|e| Error::origin_handler(format!("axum router failed: {e}")))?;
 
         let (parts, body) = axum_response.into_parts();
         let body = Body::from_reader(AxumBodyReader::new(body.into_data_stream()));

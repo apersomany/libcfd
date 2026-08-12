@@ -5,6 +5,8 @@
 //! and response types are transport-neutral and runtime-agnostic.
 
 mod duplex;
+mod error;
+pub use error::Error;
 mod pump;
 
 #[cfg(feature = "axum-origin")]

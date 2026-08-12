@@ -1,5 +1,8 @@
 //! Tunnel identities: quick tunnels and named tunnels.
 
+mod error;
+pub use error::Error;
+
 pub(crate) mod secret;
 
 #[cfg(feature = "named-tunnel")]
@@ -14,7 +17,7 @@ pub use named::NamedTunnel;
 #[cfg(feature = "quick-tunnel")]
 pub use quick::{QuickTunnel, QuickTunnelOptions, create_quick_tunnel};
 
-use crate::error::{Error, Result};
+use crate::error::{Error as CrateError, Result};
 
 /// A tunnel identity, containing everything an edge connection needs to
 /// register: the account tag, the tunnel id, and the tunnel secret.
@@ -105,8 +108,8 @@ impl Tunnel {
 }
 
 pub(crate) fn parse_tunnel_id(id: &str) -> Result<[u8; 16]> {
-    let uuid =
-        uuid::Uuid::parse_str(id).map_err(|e| Error::InvalidTunnelId(format!("{id:?}: {e}")))?;
+    let uuid = uuid::Uuid::parse_str(id)
+        .map_err(|e| CrateError::invalid_tunnel_id(format!("{id:?}: {e}")))?;
     Ok(*uuid.as_bytes())
 }
 

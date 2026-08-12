@@ -129,10 +129,10 @@ pub(crate) async fn register_on_stream<S: AsyncStream + Unpin>(
         ConnectionResponse::Error(e) => {
             if e.cause == DUPLICATE_CONNECTION_CAUSE {
                 let _ = client.close().await;
-                return Err(Error::DuplicateConnection(e.cause));
+                return Err(Error::duplicate_connection(e.cause));
             }
             let _ = client.close().await;
-            return Err(Error::Registration(e.into()));
+            return Err(Error::registration(e.into()));
         }
     };
 

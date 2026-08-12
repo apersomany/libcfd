@@ -58,9 +58,7 @@ pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddr>
         }
     }
     if edges.is_empty() {
-        return Err(Error::EdgeDiscovery(
-            "no edge addresses could be resolved".into(),
-        ));
+        return Err(Error::edge_discovery("no edge addresses could be resolved"));
     }
     Ok(edges)
 }

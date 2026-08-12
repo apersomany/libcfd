@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Source re-layout and per-level error types
+
+- Reorganized the source tree into level-scoped modules: `tunnel/`
+  (`named`, `quick`, `secret`, `error`), `edge/` (`quic`, `h2`, `connector`,
+  `discovery`, `control`, `serve`, `event`, `roots`, `error`), and `origin/`
+  (`http`, `websocket`, `tcp`, `axum`, `duplex`, `pump`, `error`). The layout
+  change is behavior-neutral; all crate-root re-exports and public function
+  signatures are unchanged.
+- Added per-level error types `tunnel::Error`, `edge::Error`, and
+  `origin::Error`; the crate-level `Error` now composes them via `Tunnel`,
+  `Edge`, and `Origin` variants. The previous flat variant set changed shape
+  (for example `Error::QuickTunnelApi(s)` is now
+  `Error::Tunnel(tunnel::Error::QuickTunnelApi(s))`), which is a breaking
+  change for consumers matching on `Error` variants. Match arms must be
+  updated; error Display messages and `is_permanent()` semantics are retained.
+- The `edge`, `origin`, and `tunnel` modules are now public (with their
+  per-level `Error` types re-exported) so consumers can name and match the
+  composed inner errors. This adds new public module paths but removes no
+  previously public item.
+
 ### Code-quality improvement campaign
 
 - Feature-gated optional dependencies: `quiche` (and its BoringSSL backend) is

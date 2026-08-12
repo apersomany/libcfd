@@ -113,26 +113,26 @@ pub async fn create_quick_tunnel(options: &QuickTunnelOptions) -> Result<QuickTu
     let (status, body) = api::post_empty(&url, &headers, options.http_timeout).await?;
     if status >= 300 {
         let message = String::from_utf8_lossy(&body);
-        return Err(Error::QuickTunnelApi(format!(
+        return Err(Error::quick_tunnel_api(format!(
             "service returned status {status}: {message}"
         )));
     }
     let data: QuickTunnelResponse =
-        serde_json::from_slice(&body).map_err(|e| Error::QuickTunnelResponse(e.to_string()))?;
+        serde_json::from_slice(&body).map_err(|e| Error::quick_tunnel_response(e.to_string()))?;
     if !data.success {
         let message = data
             .errors
             .first()
             .map(|e| format!("{}: {}", e.code, e.message))
             .unwrap_or_else(|| "unknown error".into());
-        return Err(Error::QuickTunnelApi(message));
+        return Err(Error::quick_tunnel_api(message));
     }
     let result = data
         .result
-        .ok_or_else(|| Error::QuickTunnelResponse("response has no result".into()))?;
+        .ok_or_else(|| Error::quick_tunnel_response("response has no result"))?;
     if result.id.is_empty() || result.hostname.is_empty() {
-        return Err(Error::QuickTunnelResponse(
-            "response result is missing id or hostname".into(),
+        return Err(Error::quick_tunnel_response(
+            "response result is missing id or hostname",
         ));
     }
     Ok(QuickTunnel {

@@ -132,7 +132,7 @@ impl MockEdge {
         let mut buf = [0u8; 64];
         let n = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf))
             .await
-            .map_err(|_| Error::Quic("raw stream exchange timed out".into()))??;
+            .map_err(|_| Error::quic("raw stream exchange timed out"))??;
         stream.finish();
         Ok((response, buf[..n].to_vec()))
     }
@@ -164,7 +164,7 @@ impl MockEdge {
         let mut body = Vec::new();
         let _ = tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut body))
             .await
-            .map_err(|_| Error::Quic("response body timed out".into()))??;
+            .map_err(|_| Error::quic("response body timed out"))??;
         Ok((response, body))
     }
 }

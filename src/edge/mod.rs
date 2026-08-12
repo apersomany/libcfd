@@ -1,12 +1,14 @@
 //! Edge connectivity: discovery, connections, registration, and serving.
 //!
 //! [`EdgeConnector`] orchestrates edge discovery, connection establishment,
-//! retries, and transport selection. The [`quic`] and [`h2`] transports are
+//! retries, and transport selection. The `quic` and `h2` transports are
 //! gated behind the `quic-edge` and `h2-edge` features, respectively.
 
 mod connector;
 pub(crate) mod control;
 mod discovery;
+mod error;
+pub use error::Error;
 pub(crate) mod event;
 #[cfg(h2_any)]
 pub(crate) mod h2;

@@ -20,16 +20,16 @@ pub(crate) async fn post_empty(
     timeout: std::time::Duration,
 ) -> Result<(u16, Vec<u8>)> {
     let uri = http::Uri::try_from(url)
-        .map_err(|e| Error::QuickTunnelResponse(format!("invalid api url: {e}")))?;
+        .map_err(|e| Error::quick_tunnel_response(format!("invalid api url: {e}")))?;
     let scheme = uri.scheme_str().unwrap_or("https");
     if scheme != "https" {
-        return Err(Error::QuickTunnelResponse(format!(
+        return Err(Error::quick_tunnel_response(format!(
             "unsupported scheme {scheme}"
         )));
     }
     let host = uri
         .host()
-        .ok_or_else(|| Error::QuickTunnelResponse("missing host".into()))?;
+        .ok_or_else(|| Error::quick_tunnel_response("missing host"))?;
     let port = uri.port_u16().unwrap_or(443);
     let path = if uri.path().is_empty() {
         "/"
@@ -39,7 +39,7 @@ pub(crate) async fn post_empty(
     let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
 
     let server_name = ServerName::try_from(host.to_string())
-        .map_err(|e| Error::QuickTunnelResponse(format!("invalid host: {e}")))?;
+        .map_err(|e| Error::quick_tunnel_response(format!("invalid host: {e}")))?;
 
     let config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store())
@@ -48,19 +48,19 @@ pub(crate) async fn post_empty(
 
     let addr = tokio::net::lookup_host((host, port))
         .await
-        .map_err(Error::QuickTunnelRequest)?
+        .map_err(Error::quick_tunnel_request)?
         .next()
-        .ok_or_else(|| Error::QuickTunnelResponse(format!("could not resolve {host}:{port}")))?;
+        .ok_or_else(|| Error::quick_tunnel_response(format!("could not resolve {host}:{port}")))?;
 
     let tcp = tokio::time::timeout(timeout, TcpStream::connect(addr))
         .await
-        .map_err(|_| Error::QuickTunnelApi("connection timed out".into()))?
-        .map_err(Error::QuickTunnelRequest)?;
+        .map_err(|_| Error::quick_tunnel_api("connection timed out"))?
+        .map_err(Error::quick_tunnel_request)?;
 
     let mut stream = tokio::time::timeout(timeout, connector.connect(server_name, tcp))
         .await
-        .map_err(|_| Error::QuickTunnelApi("tls handshake timed out".into()))?
-        .map_err(|e| Error::QuickTunnelRequest(io::Error::other(e)))?;
+        .map_err(|_| Error::quick_tunnel_api("tls handshake timed out"))?
+        .map_err(|e| Error::quick_tunnel_request(io::Error::other(e)))?;
 
     let mut request = format!(
         "POST {path}{query} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: 0\r\nConnection: close\r\n"
@@ -73,14 +73,14 @@ pub(crate) async fn post_empty(
     stream
         .write_all(request.as_bytes())
         .await
-        .map_err(Error::QuickTunnelRequest)?;
-    stream.flush().await.map_err(Error::QuickTunnelRequest)?;
+        .map_err(Error::quick_tunnel_request)?;
+    stream.flush().await.map_err(Error::quick_tunnel_request)?;
 
     let mut buf = Vec::new();
     tokio::time::timeout(timeout, stream.read_to_end(&mut buf))
         .await
-        .map_err(|_| Error::QuickTunnelApi("response timed out".into()))?
-        .map_err(Error::QuickTunnelRequest)?;
+        .map_err(|_| Error::quick_tunnel_api("response timed out"))?
+        .map_err(Error::quick_tunnel_request)?;
 
     let (status, _headers, body) = parse_http_response(&buf)?;
     Ok((status, body))
@@ -101,19 +101,19 @@ fn parse_http_response(bytes: &[u8]) -> Result<HttpResponse> {
     let header_end = bytes
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| Error::QuickTunnelResponse("missing response headers".into()))?;
+        .ok_or_else(|| Error::quick_tunnel_response("missing response headers"))?;
     let head = std::str::from_utf8(&bytes[..header_end])
-        .map_err(|_| Error::QuickTunnelResponse("response headers not utf-8".into()))?;
+        .map_err(|_| Error::quick_tunnel_response("response headers not utf-8"))?;
     let mut lines = head.split("\r\n");
     let status_line = lines
         .next()
-        .ok_or_else(|| Error::QuickTunnelResponse("empty status line".into()))?;
+        .ok_or_else(|| Error::quick_tunnel_response("empty status line"))?;
     let status: u16 = status_line
         .split_whitespace()
         .nth(1)
-        .ok_or_else(|| Error::QuickTunnelResponse("malformed status line".into()))?
+        .ok_or_else(|| Error::quick_tunnel_response("malformed status line"))?
         .parse()
-        .map_err(|_| Error::QuickTunnelResponse("malformed status code".into()))?;
+        .map_err(|_| Error::quick_tunnel_response("malformed status code"))?;
 
     let mut headers = Vec::new();
     let mut content_length = None;

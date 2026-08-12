@@ -1,77 +1,68 @@
 use thiserror::Error;
 
 /// Errors surfaced by the libcfd public API.
+///
+/// The crate-level error composes the per-level `tunnel::Error`,
+/// `edge::Error`, and `origin::Error` types; match on the inner variant
+/// to handle a specific failure.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// The quick tunnel HTTP API rejected the request or returned an error.
-    #[error("quick tunnel API error: {0}")]
-    QuickTunnelApi(String),
-    /// The quick tunnel HTTP API response could not be parsed.
-    #[error("quick tunnel API response was malformed: {0}")]
-    QuickTunnelResponse(String),
-    /// The HTTP request to the quick tunnel API failed.
-    #[error("quick tunnel API request failed: {0}")]
-    QuickTunnelRequest(#[source] std::io::Error),
-    /// A named tunnel credentials file could not be loaded or parsed.
-    #[error("named tunnel credentials error: {0}")]
-    NamedTunnelCredentials(String),
-    /// Edge discovery (DNS SRV or fallback resolution) failed.
-    #[error("edge discovery failed: {0}")]
-    EdgeDiscovery(String),
-    /// The QUIC connection to the edge failed.
-    #[error("quic connection failed: {0}")]
-    Quic(String),
-    /// Registration with the edge was rejected.
-    #[error("registration failed: {0}")]
-    Registration(#[source] libcfd_rpc::tunnel::RegistrationFailure),
-    /// The edge rejected the connection because the tunnel is already
-    /// registered elsewhere (cloudflared's `EDUPCONN`).
-    #[error("duplicate connection: {0}")]
-    DuplicateConnection(String),
-    /// The HTTP/2 edge connection failed.
-    #[error("http2 edge connection failed: {0}")]
-    H2(String),
-    /// The edge returned an error for the RPC stream.
-    #[error("control stream error: {0}")]
-    Control(#[from] libcfd_rpc::RpcError),
-    /// The TLS configuration for the edge connection could not be built.
-    #[error("tls configuration failed: {0}")]
-    Tls(String),
-    /// The origin handler returned an error.
-    #[error("origin handler error: {0}")]
-    Origin(String),
-    /// An underlying I/O operation failed.
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-    /// A tunnel id could not be parsed as a UUID.
-    #[error("invalid tunnel id: {0}")]
-    InvalidTunnelId(String),
+    /// A tunnel identity or the quick tunnel HTTP API failed.
+    #[cfg(any_tunnel)]
+    #[error(transparent)]
+    Tunnel(#[from] crate::tunnel::Error),
+    /// Edge discovery, connection, registration, or serving failed.
+    #[cfg(edge_conn)]
+    #[error(transparent)]
+    Edge(#[from] crate::edge::Error),
+    /// An origin handler or its byte stream failed.
+    #[error(transparent)]
+    Origin(#[from] crate::origin::Error),
 }
 
+/// Maps a bare string to an origin-handler failure, so handlers can write
+/// `Err("message".into())`.
 impl From<String> for Error {
-    fn from(msg: String) -> Self {
-        Self::Origin(msg)
+    fn from(message: String) -> Self {
+        Self::Origin(crate::origin::Error::Handler(message))
     }
 }
 
-#[cfg(feature = "quic-edge")]
+/// I/O failures in the edge path surface as `Error::Edge(edge::Error::Io)`.
+#[cfg(edge_conn)]
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Self::Edge(err.into())
+    }
+}
+
+/// RPC failures on the control stream surface as
+/// `Error::Edge(edge::Error::Control)`.
+#[cfg(edge_conn)]
+impl From<libcfd_rpc::RpcError> for Error {
+    fn from(err: libcfd_rpc::RpcError) -> Self {
+        Self::Edge(err.into())
+    }
+}
+
+#[cfg(quic_any)]
 impl From<boring::error::ErrorStack> for Error {
     fn from(err: boring::error::ErrorStack) -> Self {
-        Self::Tls(err.to_string())
+        Self::Edge(err.into())
     }
 }
 
-#[cfg(feature = "quic-edge")]
-impl From<quiche::Error> for Error {
-    fn from(err: quiche::Error) -> Self {
-        Self::Quic(err.to_string())
-    }
-}
-
-#[cfg(feature = "h2-edge")]
+#[cfg(h2_any)]
 impl From<h2::Error> for Error {
     fn from(err: h2::Error) -> Self {
-        Self::H2(err.to_string())
+        Self::Edge(err.into())
+    }
+}
+
+#[cfg(quic_any)]
+impl From<quiche::Error> for Error {
+    fn from(err: quiche::Error) -> Self {
+        Self::Edge(err.into())
     }
 }
 
@@ -85,8 +76,70 @@ impl Error {
     pub(crate) fn is_permanent(&self) -> bool {
         matches!(
             self,
-            Error::Registration(libcfd_rpc::tunnel::RegistrationFailure::Permanent(_))
+            Error::Edge(crate::edge::Error::Registration(
+                libcfd_rpc::tunnel::RegistrationFailure::Permanent(_)
+            ))
         )
+    }
+
+    #[cfg(feature = "quick-tunnel")]
+    pub(crate) fn quick_tunnel_api(message: impl Into<String>) -> Self {
+        Self::Tunnel(crate::tunnel::Error::QuickTunnelApi(message.into()))
+    }
+
+    #[cfg(feature = "quick-tunnel")]
+    pub(crate) fn quick_tunnel_response(message: impl Into<String>) -> Self {
+        Self::Tunnel(crate::tunnel::Error::QuickTunnelResponse(message.into()))
+    }
+
+    #[cfg(feature = "quick-tunnel")]
+    pub(crate) fn quick_tunnel_request(error: std::io::Error) -> Self {
+        Self::Tunnel(crate::tunnel::Error::QuickTunnelRequest(error))
+    }
+
+    #[cfg(feature = "named-tunnel")]
+    pub(crate) fn named_tunnel_credentials(message: impl Into<String>) -> Self {
+        Self::Tunnel(crate::tunnel::Error::NamedTunnelCredentials(message.into()))
+    }
+
+    #[cfg(any_tunnel)]
+    pub(crate) fn invalid_tunnel_id(message: impl Into<String>) -> Self {
+        Self::Tunnel(crate::tunnel::Error::InvalidTunnelId(message.into()))
+    }
+
+    #[cfg(edge_conn)]
+    pub(crate) fn edge_discovery(message: impl Into<String>) -> Self {
+        Self::Edge(crate::edge::Error::EdgeDiscovery(message.into()))
+    }
+
+    #[cfg(quic_any)]
+    pub(crate) fn quic(message: impl Into<String>) -> Self {
+        Self::Edge(crate::edge::Error::Quic(message.into()))
+    }
+
+    #[cfg(edge_conn)]
+    pub(crate) fn registration(failure: libcfd_rpc::tunnel::RegistrationFailure) -> Self {
+        Self::Edge(crate::edge::Error::Registration(failure))
+    }
+
+    #[cfg(edge_conn)]
+    pub(crate) fn duplicate_connection(cause: impl Into<String>) -> Self {
+        Self::Edge(crate::edge::Error::DuplicateConnection(cause.into()))
+    }
+
+    #[cfg(h2_any)]
+    pub(crate) fn h2(message: impl Into<String>) -> Self {
+        Self::Edge(crate::edge::Error::H2(message.into()))
+    }
+
+    #[cfg(quic_any)]
+    pub(crate) fn edge_io(error: std::io::Error) -> Self {
+        Self::Edge(crate::edge::Error::Io(error))
+    }
+
+    #[cfg(feature = "axum-origin")]
+    pub(crate) fn origin_handler(message: impl Into<String>) -> Self {
+        Self::Origin(crate::origin::Error::Handler(message.into()))
     }
 }
 
@@ -96,27 +149,48 @@ mod tests {
 
     #[test]
     fn every_public_error_path_is_typed_and_displayable() {
-        let errors = [
-            Error::QuickTunnelApi("rate limited".into()),
-            Error::QuickTunnelResponse("bad json".into()),
-            Error::QuickTunnelRequest(std::io::Error::other("dns")),
-            Error::NamedTunnelCredentials("missing file".into()),
-            Error::EdgeDiscovery("no srv records".into()),
-            Error::Quic("handshake failed".into()),
-            Error::Registration(libcfd_rpc::tunnel::RegistrationFailure::Permanent(
-                "blocked".into(),
+        let mut errors: Vec<Error> = Vec::new();
+        #[cfg(feature = "quick-tunnel")]
+        errors.extend([
+            Error::Tunnel(crate::tunnel::Error::QuickTunnelApi("rate limited".into())),
+            Error::Tunnel(crate::tunnel::Error::QuickTunnelResponse("bad json".into())),
+            Error::Tunnel(crate::tunnel::Error::QuickTunnelRequest(
+                std::io::Error::other("dns"),
             )),
-            Error::DuplicateConnection("EDUPCONN".into()),
-            Error::H2("connection reset".into()),
-            Error::Control(libcfd_rpc::RpcError::Eof),
-            Error::Tls("bad certificate".into()),
-            Error::Origin("handler failed".into()),
-            Error::Io(std::io::Error::other("io")),
-            Error::InvalidTunnelId("not a uuid".into()),
-        ];
+        ]);
+        #[cfg(feature = "named-tunnel")]
+        errors.push(Error::Tunnel(crate::tunnel::Error::NamedTunnelCredentials(
+            "missing file".into(),
+        )));
+        #[cfg(any_tunnel)]
+        errors.push(Error::Tunnel(crate::tunnel::Error::InvalidTunnelId(
+            "not a uuid".into(),
+        )));
+        #[cfg(edge_conn)]
+        errors.extend([
+            Error::Edge(crate::edge::Error::EdgeDiscovery("no srv records".into())),
+            Error::Edge(crate::edge::Error::Registration(
+                libcfd_rpc::tunnel::RegistrationFailure::Permanent("blocked".into()),
+            )),
+            Error::Edge(crate::edge::Error::DuplicateConnection("EDUPCONN".into())),
+            Error::Edge(crate::edge::Error::Control(libcfd_rpc::RpcError::Eof)),
+            Error::Edge(crate::edge::Error::Io(std::io::Error::other("io"))),
+        ]);
+        #[cfg(quic_any)]
+        errors.extend([
+            Error::Edge(crate::edge::Error::Quic("handshake failed".into())),
+            Error::Edge(crate::edge::Error::Tls("bad certificate".into())),
+        ]);
+        #[cfg(h2_any)]
+        errors.push(Error::Edge(crate::edge::Error::H2(
+            "connection reset".into(),
+        )));
+        errors.extend([
+            Error::Origin(crate::origin::Error::Handler("handler failed".into())),
+            Error::Origin(crate::origin::Error::Io(std::io::Error::other("io"))),
+        ]);
         for error in errors {
-            let display = error.to_string();
-            assert!(!display.is_empty());
+            assert!(!error.to_string().is_empty());
         }
     }
 
@@ -128,7 +202,7 @@ mod tests {
             retry_after: 1_000,
         };
         let permanent = libcfd_rpc::tunnel::RegistrationFailure::Permanent("blocked".into());
-        assert!(!Error::Registration(retryable).is_permanent());
-        assert!(Error::Registration(permanent).is_permanent());
+        assert!(!Error::Edge(crate::edge::Error::Registration(retryable)).is_permanent());
+        assert!(Error::Edge(crate::edge::Error::Registration(permanent)).is_permanent());
     }
 }

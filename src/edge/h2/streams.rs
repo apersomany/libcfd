@@ -174,7 +174,7 @@ fn write_h2_headers(
     *http_response.headers_mut() = encode_response_headers(response);
     respond
         .send_response(http_response, false)
-        .map_err(|e| Error::H2(format!("failed to send response headers: {e}")))
+        .map_err(|e| Error::h2(format!("failed to send response headers: {e}")))
 }
 
 async fn write_h2_error(respond: SendResponse<Bytes>, message: &str) -> Result<()> {

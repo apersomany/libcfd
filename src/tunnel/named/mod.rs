@@ -33,13 +33,13 @@ impl NamedTunnel {
     /// Loads tunnel credentials from a cloudflared credentials file.
     pub fn from_credentials_file(path: impl AsRef<Path>) -> Result<NamedTunnel> {
         let bytes = std::fs::read(path.as_ref()).map_err(|e| {
-            Error::NamedTunnelCredentials(format!("failed to read credentials file: {e}"))
+            Error::named_tunnel_credentials(format!("failed to read credentials file: {e}"))
         })?;
         let tunnel: NamedTunnel = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::NamedTunnelCredentials(e.to_string()))?;
+            .map_err(|e| Error::named_tunnel_credentials(e.to_string()))?;
         if tunnel.tunnel_id.is_empty() {
-            return Err(Error::NamedTunnelCredentials(
-                "credentials file has no TunnelID".into(),
+            return Err(Error::named_tunnel_credentials(
+                "credentials file has no TunnelID",
             ));
         }
         Ok(tunnel)
