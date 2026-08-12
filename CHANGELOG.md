@@ -35,13 +35,12 @@
   cfgs (`any_tunnel`, `any_edge`, `edge_conn`, `quic_any`, `h2_any`).
 - Pruned redundant tests and deduplicated the loopback mock-edge helpers.
 
-### Live-edge testing
+### Test-suite pruning
 
-- Added `tests/live_edge.rs` (ignored by default): it creates a quick tunnel
-  through the real Cloudflare API or reuses the last one, whose credentials are
-  stored gitignored in `.test-creds/quick-tunnel.json`, and verifies
-  registration and HTTP serving against the real edge. `scripts/live-test.sh`
-  runs the suite.
+- Removed the mock-edge loopback end-to-end tests (`src/loopback/`) and the
+  live-edge test (`tests/live_edge.rs` plus `scripts/live-test.sh`), along
+  with the `live_edge` test target and the `rcgen` dev-dependency. Module-level
+  unit tests remain the test surface.
 
 ### libcfd-rpc 0.1
 

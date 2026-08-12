@@ -54,9 +54,6 @@
 #[cfg(edge_conn)]
 pub mod edge;
 mod error;
-#[cfg(all(feature = "quick-tunnel", any_edge))]
-#[cfg(test)]
-mod loopback;
 pub mod origin;
 #[cfg(all(feature = "quick-tunnel", feature = "quic-edge"))]
 mod run;
