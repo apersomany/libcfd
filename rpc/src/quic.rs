@@ -60,9 +60,9 @@ impl ConnectionType {
 #[derive(Debug, Clone)]
 pub struct ConnectRequest {
     /// The destination host and path (e.g. `http://example.com/path`).
-    pub dest: String,
+    pub destination: String,
     /// Whether the stream carries HTTP, websocket, or raw TCP traffic.
-    pub conn_type: ConnectionType,
+    pub connection_type: ConnectionType,
     /// Method, host, and per-header metadata entries.
     pub metadata: Vec<(String, String)>,
 }
@@ -119,8 +119,8 @@ pub fn encode_connect_request(
 ) -> Result<capnp::message::Builder<capnp::message::HeapAllocator>> {
     let mut message = capnp::message::Builder::new_default();
     let mut root = message.init_root::<mpc::connect_request::Builder>();
-    root.set_dest(&request.dest);
-    root.set_type(request.conn_type.to_capnp());
+    root.set_dest(&request.destination);
+    root.set_type(request.connection_type.to_capnp());
     let mut md = root.reborrow().init_metadata(request.metadata.len() as u32);
     for (i, (key, val)) in request.metadata.iter().enumerate() {
         let mut entry = md.reborrow().get(i as u32);
@@ -144,8 +144,8 @@ fn decode_connect_request_message<R: capnp::message::ReaderSegments>(
     reader: &capnp::message::Reader<R>,
 ) -> Result<ConnectRequest> {
     let root = reader.get_root::<mpc::connect_request::Reader>()?;
-    let dest = root.get_dest()?.to_str()?.to_string();
-    let conn_type = ConnectionType::from_capnp(root.get_type()?)?;
+    let destination = root.get_dest()?.to_str()?.to_string();
+    let connection_type = ConnectionType::from_capnp(root.get_type()?)?;
     let mut metadata = Vec::new();
     for entry in root.get_metadata()? {
         metadata.push((
@@ -154,8 +154,8 @@ fn decode_connect_request_message<R: capnp::message::ReaderSegments>(
         ));
     }
     Ok(ConnectRequest {
-        dest,
-        conn_type,
+        destination,
+        connection_type,
         metadata,
     })
 }
@@ -211,8 +211,8 @@ mod tests {
     #[test]
     fn connect_request_round_trip() {
         let request = ConnectRequest {
-            dest: "http://example.com/path".into(),
-            conn_type: ConnectionType::Http,
+            destination: "http://example.com/path".into(),
+            connection_type: ConnectionType::Http,
             metadata: vec![
                 ("HttpMethod".into(), "GET".into()),
                 ("HttpHost".into(), "example.com".into()),
@@ -221,8 +221,8 @@ mod tests {
         let message = encode_connect_request(&request).unwrap();
         let bytes = capnp::serialize::write_message_to_words(&message);
         let decoded = decode_connect_request_bytes(&bytes).unwrap();
-        assert_eq!(decoded.dest, request.dest);
-        assert_eq!(decoded.conn_type, request.conn_type);
+        assert_eq!(decoded.destination, request.destination);
+        assert_eq!(decoded.connection_type, request.connection_type);
         assert_eq!(decoded.metadata, request.metadata);
     }
 

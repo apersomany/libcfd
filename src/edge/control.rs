@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use libcfd_rpc::AsyncStream;
 use libcfd_rpc::tunnel::{
-    ClientInfo, ConnectionOptions, ConnectionResponse, TunnelAuth, TunnelClient,
+    ClientInformation, ConnectionOptions, ConnectionResponse, TunnelAuth, TunnelClient,
 };
 
 #[cfg(feature = "quic-edge")]
@@ -34,7 +34,7 @@ const DEFAULT_FEATURES: &[&str] = &[
 #[derive(Debug, Clone)]
 pub(crate) struct RegistrationOptions {
     pub features: Vec<String>,
-    pub num_previous_attempts: u8,
+    pub number_previous_attempts: u8,
     pub origin_local_ip: Vec<u8>,
 }
 
@@ -42,42 +42,41 @@ impl Default for RegistrationOptions {
     fn default() -> Self {
         Self {
             features: DEFAULT_FEATURES.iter().map(|f| (*f).to_string()).collect(),
-            num_previous_attempts: 0,
+            number_previous_attempts: 0,
             origin_local_ip: Vec::new(),
         }
     }
 }
 
-fn build_connection_options(opts: &RegistrationOptions) -> ConnectionOptions {
+fn build_connection_options(options: &RegistrationOptions) -> ConnectionOptions {
     ConnectionOptions {
-        client: ClientInfo {
-            // Cloudflared uses one persistent connector UUID per process;
-            // each new connection reuses it.
-            client_id: connector_client_id().to_vec(),
-            features: opts.features.clone(),
+        client: ClientInformation {
+            // Cloudflared keeps one connector UUID per process and reuses it for every new connection.
+            client_identifier: connector_client_identifier().to_vec(),
+            features: options.features.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             arch: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
         },
-        origin_local_ip: opts.origin_local_ip.clone(),
+        origin_local_ip: options.origin_local_ip.clone(),
         replace_existing: false,
         compression_quality: 0,
-        num_previous_attempts: opts.num_previous_attempts,
+        number_previous_attempts: options.number_previous_attempts,
     }
 }
 
-fn connector_client_id() -> &'static [u8; 16] {
-    static CLIENT_ID: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
-    CLIENT_ID.get_or_init(|| {
-        let mut id = [0u8; 16];
-        let _ = getrandom::fill(&mut id);
-        id
+fn connector_client_identifier() -> &'static [u8; 16] {
+    static CLIENT_IDENTIFIER: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
+    CLIENT_IDENTIFIER.get_or_init(|| {
+        let mut identifier = [0u8; 16];
+        let _ = getrandom::fill(&mut identifier);
+        identifier
     })
 }
 
 /// The local socket IP as 4 or 16 bytes, sent as the registration
 /// `originLocalIp` (cloudflared does the same).
-pub(crate) fn peer_ip_bytes(addr: &std::net::SocketAddr) -> Vec<u8> {
-    match addr.ip() {
+pub(crate) fn peer_ip_bytes(address: &std::net::SocketAddr) -> Vec<u8> {
+    match address.ip() {
         std::net::IpAddr::V4(ip) => ip.octets().to_vec(),
         std::net::IpAddr::V6(ip) => ip.octets().to_vec(),
     }
@@ -90,16 +89,16 @@ pub(crate) fn peer_ip_bytes(addr: &std::net::SocketAddr) -> Vec<u8> {
 /// can unregister later.
 #[cfg(feature = "quic-edge")]
 pub(crate) async fn register(
-    conn: &QuicConnection,
+    connection: &QuicConnection,
     tunnel: &Tunnel,
-    opts: &RegistrationOptions,
-    config_json: &[u8],
+    options: &RegistrationOptions,
+    configuration_json: &[u8],
 ) -> Result<(
     libcfd_rpc::tunnel::ConnectionDetails,
     TunnelClient<QuicStream>,
 )> {
-    let stream = conn.open_control_stream();
-    register_on_stream(stream, tunnel, opts, config_json).await
+    let stream = connection.open_control_stream();
+    register_on_stream(stream, tunnel, options, configuration_json).await
 }
 
 /// Registers the tunnel over any control stream (QUIC stream 0 or the HTTP/2
@@ -107,21 +106,21 @@ pub(crate) async fn register(
 pub(crate) async fn register_on_stream<S: AsyncStream + Unpin>(
     stream: S,
     tunnel: &Tunnel,
-    opts: &RegistrationOptions,
-    config_json: &[u8],
+    options: &RegistrationOptions,
+    configuration_json: &[u8],
 ) -> Result<(libcfd_rpc::tunnel::ConnectionDetails, TunnelClient<S>)> {
     let rpc = libcfd_rpc::RpcClient::new(stream);
     let mut client = TunnelClient::new(rpc);
     client.bootstrap().await?;
 
-    let tunnel_id = tunnel.tunnel_id_bytes()?;
+    let tunnel_identifier = tunnel.tunnel_identifier_bytes()?;
     let auth = TunnelAuth {
         account_tag: tunnel.account_tag().to_string(),
         tunnel_secret: tunnel.tunnel_secret().to_vec(),
     };
-    let options = build_connection_options(opts);
+    let options = build_connection_options(options);
     let response = client
-        .register_connection(auth, &tunnel_id, 0, &options)
+        .register_connection(auth, &tunnel_identifier, 0, &options)
         .await?;
 
     let details = match response {
@@ -137,7 +136,7 @@ pub(crate) async fn register_on_stream<S: AsyncStream + Unpin>(
     };
 
     if !details.tunnel_is_remotely_managed
-        && let Err(e) = client.update_local_configuration(config_json).await
+        && let Err(e) = client.update_local_configuration(configuration_json).await
     {
         tracing::debug!("unable to push local configuration: {e}");
     }

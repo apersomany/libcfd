@@ -44,14 +44,18 @@ pub struct RegisterUdpSessionResponse {
 /// Handlers for the RPC calls the edge makes on the connector.
 pub trait CloudflaredHandler: Send + Sync {
     /// Applies a remotely-managed configuration push from the edge.
-    fn update_configuration(&self, version: i32, config: &[u8]) -> UpdateConfigurationResponse;
+    fn update_configuration(
+        &self,
+        version: i32,
+        configuration: &[u8],
+    ) -> UpdateConfigurationResponse;
     /// Registers a UDP session for QUIC datagrams. libcfd does not support
     /// this; the default replies with an error.
     fn register_udp_session(
         &self,
-        _session_id: &[u8; 16],
-        _dst_ip: &[u8],
-        _dst_port: u16,
+        _session_identifier: &[u8; 16],
+        _destination_ip: &[u8],
+        _destination_port: u16,
     ) -> RegisterUdpSessionResponse {
         RegisterUdpSessionResponse {
             error: "UDP sessions are not supported".into(),
@@ -59,7 +63,7 @@ pub trait CloudflaredHandler: Send + Sync {
         }
     }
     /// Unregisters a UDP session. No-op by default.
-    fn unregister_udp_session(&self, _session_id: &[u8; 16], _message: &str) {}
+    fn unregister_udp_session(&self, _session_identifier: &[u8; 16], _message: &str) {}
 }
 
 /// Serves the edge's calls on an RPC stream until the stream ends.
@@ -75,9 +79,7 @@ where
     H: CloudflaredHandler,
 {
     loop {
-        // All capnp reading and reply building happens in a scope that ends
-        // before the next await, so no non-`Send` capnp state is held
-        // across an await point (mirroring the RPC client's rule).
+        // Capnp reads and reply building stay in this scope so no non-Send capnp state crosses an await (mirroring the RPC client's rule).
         let reply: Option<Vec<u8>> = {
             let reader = match read_message(stream).await {
                 Ok(reader) => reader,
@@ -102,21 +104,23 @@ where
                     );
                     let reply = match classify(call.get_interface_id(), call.get_method_id()) {
                         Method::UpdateConfiguration => {
-                            let params = call.reborrow().get_params()?.get_content().get_as::<
+                            let parameters = call.reborrow().get_params()?.get_content().get_as::<
                                 tunnelrpc_capnp::configuration_manager::update_configuration_params::Reader<'_>,
                             >()?;
-                            let response = handler
-                                .update_configuration(params.get_version(), params.get_config()?);
+                            let response = handler.update_configuration(
+                                parameters.get_version(),
+                                parameters.get_config()?,
+                            );
                             build_update_configuration_return(question, &response)?
                         }
                         Method::RegisterUdpSession => {
-                            let params = call.reborrow().get_params()?.get_content().get_as::<
+                            let parameters = call.reborrow().get_params()?.get_content().get_as::<
                                 tunnelrpc_capnp::session_manager::register_udp_session_params::Reader<'_>,
                             >()?;
                             let response = handler.register_udp_session(
-                                &session_id_bytes(params.get_session_id()?),
-                                params.get_dst_ip()?,
-                                params.get_dst_port(),
+                                &session_identifier_bytes(parameters.get_session_id()?),
+                                parameters.get_dst_ip()?,
+                                parameters.get_dst_port(),
                             );
                             build_register_udp_session_return(question, &response)?
                         }
@@ -158,8 +162,8 @@ enum Method {
     Unknown,
 }
 
-fn classify(interface_id: u64, method_id: u16) -> Method {
-    match (interface_id, method_id) {
+fn classify(interface_identifier: u64, method_identifier: u16) -> Method {
+    match (interface_identifier, method_identifier) {
         (CONFIGURATION_MANAGER_INTERFACE_ID, 0) | (CLOUDFLARED_SERVER_INTERFACE_ID, 2) => {
             Method::UpdateConfiguration
         }
@@ -174,19 +178,18 @@ fn classify(interface_id: u64, method_id: u16) -> Method {
 }
 
 /// Copies a data blob into a 16-byte session id, zero-padding short inputs.
-fn session_id_bytes(data: &[u8]) -> [u8; 16] {
-    let mut id = [0u8; 16];
+fn session_identifier_bytes(data: &[u8]) -> [u8; 16] {
+    let mut identifier = [0u8; 16];
     let n = data.len().min(16);
-    id[..n].copy_from_slice(&data[..n]);
-    id
+    identifier[..n].copy_from_slice(&data[..n]);
+    identifier
 }
 
 /// Builds the bootstrap answer: a `return` whose results carry the
 /// connector's main interface as a `senderHosted` capability, exactly as
 /// capnp-go answers a bootstrap question.
 fn build_bootstrap_return(question: u32) -> Result<Vec<u8>> {
-    // The capability table must outlive the message so the interface
-    // pointer written below can reference it.
+    // The capability table must outlive the message so the interface pointer below can reference it.
     let mut caps: capnp::private::layout::CapTable = Vec::new();
     let mut message = capnp::message::Builder::new_default();
     let root = message.init_root::<rpc_capnp::message::Builder>();
@@ -216,11 +219,11 @@ fn build_update_configuration_return(
     let mut payload = results.reborrow();
     {
         let content = payload.reborrow().init_content();
-        let mut rres =
+        let mut results_reader =
             content.init_as::<tunnelrpc_capnp::configuration_manager::update_configuration_results::Builder>();
-        let mut resp = rres.reborrow().init_result();
-        resp.set_latest_applied_version(response.latest_applied_version);
-        resp.set_err(&response.error);
+        let mut response_builder = results_reader.reborrow().init_result();
+        response_builder.set_latest_applied_version(response.latest_applied_version);
+        response_builder.set_err(&response.error);
     }
     payload.reborrow().init_cap_table(0);
     Ok(crate::io::serialize_message(&message))
@@ -239,12 +242,13 @@ fn build_register_udp_session_return(
     let mut payload = results.reborrow();
     {
         let content = payload.reborrow().init_content();
-        let mut rres = content
-            .init_as::<tunnelrpc_capnp::session_manager::register_udp_session_results::Builder>(
-        );
-        let mut resp = rres.reborrow().init_result();
-        resp.set_err(&response.error);
-        resp.set_spans(&response.spans);
+        let mut results_reader =
+            content
+                .init_as::<tunnelrpc_capnp::session_manager::register_udp_session_results::Builder>(
+                );
+        let mut response_builder = results_reader.reborrow().init_result();
+        response_builder.set_err(&response.error);
+        response_builder.set_spans(&response.spans);
     }
     payload.reborrow().init_cap_table(0);
     Ok(crate::io::serialize_message(&message))
@@ -279,16 +283,16 @@ impl ClientHook for DummyHook {
     }
     fn new_call(
         &self,
-        _interface_id: u64,
-        _method_id: u16,
+        _interface_identifier: u64,
+        _method_identifier: u16,
         _size_hint: Option<capnp::MessageSize>,
     ) -> capnp::capability::Request<capnp::any_pointer::Owned, capnp::any_pointer::Owned> {
         unreachable!("dummy hook is never called")
     }
     fn call(
         &self,
-        _interface_id: u64,
-        _method_id: u16,
+        _interface_identifier: u64,
+        _method_identifier: u16,
         _params: Box<dyn ParamsHook>,
         _results: Box<dyn ResultsHook>,
     ) -> capnp::capability::Promise<(), capnp::Error> {

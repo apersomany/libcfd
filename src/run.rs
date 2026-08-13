@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use crate::edge::{EdgeConnector, EdgeOptions, Transport, default_config_json};
+use crate::edge::{EdgeConnector, EdgeOptions, Transport, default_configuration_json};
 use crate::error::Result;
 use crate::origin::{HttpOrigin, Origin};
 use crate::tunnel::{QuickTunnel, Tunnel};
@@ -24,7 +24,7 @@ pub struct RunOptions {
     pub ca_cert_pem: Option<Vec<u8>>,
     /// JSON configuration pushed to the edge via `updateLocalConfiguration`
     /// for locally-managed tunnels.
-    pub config_json: Vec<u8>,
+    pub configuration_json: Vec<u8>,
     /// Per-connection establishment timeout.
     pub connect_timeout: Duration,
     /// Base reconnect delay between failed attempts (exponential backoff).
@@ -36,7 +36,7 @@ impl Default for RunOptions {
         Self {
             region: None,
             ca_cert_pem: None,
-            config_json: default_config_json().into(),
+            configuration_json: default_configuration_json().into(),
             connect_timeout: Duration::from_secs(15),
             backoff: Duration::from_secs(1),
         }
@@ -49,7 +49,7 @@ impl From<&RunOptions> for EdgeOptions {
             transport: Transport::Quic,
             region: options.region.clone(),
             ca_cert_pem: options.ca_cert_pem.clone(),
-            config_json: options.config_json.clone(),
+            configuration_json: options.configuration_json.clone(),
             connect_timeout: options.connect_timeout,
             backoff: options.backoff,
             ..Default::default()

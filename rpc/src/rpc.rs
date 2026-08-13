@@ -91,10 +91,10 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
     /// payload with `decode`, then sends `finish` for the question.
     pub async fn call<T>(
         &mut self,
-        import_id: u32,
-        interface_id: u64,
-        method_id: u16,
-        fill_params: impl FnOnce(&mut rpc_capnp::payload::Builder<'_>) -> Result<()>,
+        import_identifier: u32,
+        interface_identifier: u64,
+        method_identifier: u16,
+        fill_parameters: impl FnOnce(&mut rpc_capnp::payload::Builder<'_>) -> Result<()>,
         decode: impl FnOnce(rpc_capnp::payload::Reader<'_>) -> Result<T>,
     ) -> Result<T> {
         if !self.has_bootstrap {
@@ -103,8 +103,19 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
         let question = self.next_question;
         self.next_question += 1;
 
-        tracing::trace!(question, interface_id, method_id, "sending call");
-        let bytes = build_call(question, import_id, interface_id, method_id, fill_params)?;
+        tracing::trace!(
+            question,
+            interface_identifier,
+            method_identifier,
+            "sending call"
+        );
+        let bytes = build_call(
+            question,
+            import_identifier,
+            interface_identifier,
+            method_identifier,
+            fill_parameters,
+        )?;
         crate::io::write_raw(&mut self.stream, &bytes).await?;
         let reader = read_message(&mut self.stream).await?;
         let outcome = decode_call(&reader, question, decode)?;
@@ -224,10 +235,10 @@ fn build_bootstrap(question: u32) -> Result<Vec<u8>> {
 
 fn build_call<F>(
     question: u32,
-    import_id: u32,
-    interface_id: u64,
-    method_id: u16,
-    fill_params: F,
+    import_identifier: u32,
+    interface_identifier: u64,
+    method_identifier: u16,
+    fill_parameters: F,
 ) -> Result<Vec<u8>>
 where
     F: FnOnce(&mut rpc_capnp::payload::Builder<'_>) -> Result<()>,
@@ -237,12 +248,12 @@ where
     let mut call = root.init_call();
     call.set_question_id(question);
     let mut target = call.reborrow().init_target();
-    target.set_imported_cap(import_id);
-    call.reborrow().set_interface_id(interface_id);
-    call.reborrow().set_method_id(method_id);
+    target.set_imported_cap(import_identifier);
+    call.reborrow().set_interface_id(interface_identifier);
+    call.reborrow().set_method_id(method_identifier);
     call.reborrow().init_send_results_to().set_caller(());
     let mut payload = call.reborrow().init_params();
-    fill_params(&mut payload)?;
+    fill_parameters(&mut payload)?;
     Ok(crate::io::serialize_message(&message))
 }
 
@@ -255,11 +266,11 @@ fn build_finish(question: u32, release_result_caps: bool) -> Result<Vec<u8>> {
     Ok(crate::io::serialize_message(&finish))
 }
 
-fn build_release(id: u32, reference_count: u32) -> Result<Vec<u8>> {
+fn build_release(identifier: u32, reference_count: u32) -> Result<Vec<u8>> {
     let mut message = capnp::message::Builder::new_default();
     let root = message.init_root::<rpc_capnp::message::Builder>();
     let mut rel = root.init_release();
-    rel.set_id(id);
+    rel.set_id(identifier);
     rel.set_reference_count(reference_count);
     Ok(crate::io::serialize_message(&message))
 }
@@ -268,20 +279,20 @@ fn build_release(id: u32, reference_count: u32) -> Result<Vec<u8>> {
 /// capnp-go sends when a server does not implement a method.
 pub async fn send_exception<S: AsyncStream + Unpin>(
     stream: &mut S,
-    question_id: u32,
+    question_identifier: u32,
     reason: &str,
 ) -> Result<()> {
-    let bytes = build_exception(question_id, reason)?;
+    let bytes = build_exception(question_identifier, reason)?;
     crate::io::write_raw(stream, &bytes).await
 }
 
 /// Builds the framed bytes for an `unimplemented` exception return,
 /// mirroring what capnp-go sends when a server does not implement a method.
-pub(crate) fn build_exception(question_id: u32, reason: &str) -> Result<Vec<u8>> {
+pub(crate) fn build_exception(question_identifier: u32, reason: &str) -> Result<Vec<u8>> {
     let mut message = capnp::message::Builder::new_default();
     let root = message.init_root::<rpc_capnp::message::Builder>();
     let mut ret = root.init_return();
-    ret.set_answer_id(question_id);
+    ret.set_answer_id(question_identifier);
     let mut exc = ret.init_exception();
     exc.set_reason(reason);
     exc.set_type(rpc_capnp::exception::Type::Unimplemented);
@@ -294,21 +305,21 @@ pub enum Incoming {
     /// A bootstrap request for the peer's main interface.
     Bootstrap {
         /// The question id to answer.
-        question_id: u32,
+        question_identifier: u32,
     },
     /// A method call.
     Call {
         /// The question id to answer.
-        question_id: u32,
+        question_identifier: u32,
         /// The called interface.
-        interface_id: u64,
+        interface_identifier: u64,
         /// The called method.
-        method_id: u16,
+        method_identifier: u16,
     },
     /// A finish for a resolved question.
     Finish {
         /// The question id being released.
-        question_id: u32,
+        question_identifier: u32,
     },
     /// A capability release.
     Release,
@@ -327,18 +338,18 @@ pub async fn read_incoming<S: AsyncStream + Unpin>(stream: &mut S) -> Result<Opt
     let root = reader.get_root::<rpc_capnp::message::Reader>()?;
     match root.reborrow().which()? {
         rpc_capnp::message::Bootstrap(b) => Ok(Some(Incoming::Bootstrap {
-            question_id: b?.get_question_id(),
+            question_identifier: b?.get_question_id(),
         })),
         rpc_capnp::message::Call(c) => {
             let c = c?;
             Ok(Some(Incoming::Call {
-                question_id: c.reborrow().get_question_id(),
-                interface_id: c.reborrow().get_interface_id(),
-                method_id: c.reborrow().get_method_id(),
+                question_identifier: c.reborrow().get_question_id(),
+                interface_identifier: c.reborrow().get_interface_id(),
+                method_identifier: c.reborrow().get_method_id(),
             }))
         }
         rpc_capnp::message::Finish(f) => Ok(Some(Incoming::Finish {
-            question_id: f?.get_question_id(),
+            question_identifier: f?.get_question_id(),
         })),
         rpc_capnp::message::Release(_) => Ok(Some(Incoming::Release)),
         _ => Ok(Some(Incoming::Other)),

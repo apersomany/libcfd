@@ -31,8 +31,8 @@ impl From<String> for Error {
 /// I/O failures in the edge path surface as `Error::Edge(edge::Error::Io)`.
 #[cfg(edge_conn)]
 impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Self::Edge(err.into())
+    fn from(error: std::io::Error) -> Self {
+        Self::Edge(error.into())
     }
 }
 
@@ -40,29 +40,29 @@ impl From<std::io::Error> for Error {
 /// `Error::Edge(edge::Error::Control)`.
 #[cfg(edge_conn)]
 impl From<libcfd_rpc::RpcError> for Error {
-    fn from(err: libcfd_rpc::RpcError) -> Self {
-        Self::Edge(err.into())
+    fn from(error: libcfd_rpc::RpcError) -> Self {
+        Self::Edge(error.into())
     }
 }
 
 #[cfg(quic_any)]
 impl From<boring::error::ErrorStack> for Error {
-    fn from(err: boring::error::ErrorStack) -> Self {
-        Self::Edge(err.into())
+    fn from(error: boring::error::ErrorStack) -> Self {
+        Self::Edge(error.into())
     }
 }
 
 #[cfg(h2_any)]
 impl From<h2::Error> for Error {
-    fn from(err: h2::Error) -> Self {
-        Self::Edge(err.into())
+    fn from(error: h2::Error) -> Self {
+        Self::Edge(error.into())
     }
 }
 
 #[cfg(quic_any)]
 impl From<quiche::Error> for Error {
-    fn from(err: quiche::Error) -> Self {
-        Self::Edge(err.into())
+    fn from(error: quiche::Error) -> Self {
+        Self::Edge(error.into())
     }
 }
 
@@ -103,8 +103,10 @@ impl Error {
     }
 
     #[cfg(any_tunnel)]
-    pub(crate) fn invalid_tunnel_id(message: impl Into<String>) -> Self {
-        Self::Tunnel(crate::tunnel::Error::InvalidTunnelId(message.into()))
+    pub(crate) fn invalid_tunnel_identifier(message: impl Into<String>) -> Self {
+        Self::Tunnel(crate::tunnel::Error::InvalidTunnelIdentifier(
+            message.into(),
+        ))
     }
 
     #[cfg(edge_conn)]
@@ -163,9 +165,9 @@ mod tests {
             "missing file".into(),
         )));
         #[cfg(any_tunnel)]
-        errors.push(Error::Tunnel(crate::tunnel::Error::InvalidTunnelId(
-            "not a uuid".into(),
-        )));
+        errors.push(Error::Tunnel(
+            crate::tunnel::Error::InvalidTunnelIdentifier("not a uuid".into()),
+        ));
         #[cfg(edge_conn)]
         errors.extend([
             Error::Edge(crate::edge::Error::EdgeDiscovery("no srv records".into())),

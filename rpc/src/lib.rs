@@ -53,6 +53,6 @@ pub use quic::{
 };
 pub use rpc::{Incoming, RpcClient, read_incoming, send_exception};
 pub use tunnel::{
-    ClientInfo, ConnectionDetails, ConnectionError, ConnectionOptions, ConnectionResponse,
+    ClientInformation, ConnectionDetails, ConnectionError, ConnectionOptions, ConnectionResponse,
     RegistrationFailure, TunnelAuth, TunnelClient,
 };

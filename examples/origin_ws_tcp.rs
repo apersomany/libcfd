@@ -2,16 +2,18 @@
 //!
 //! Run with: cargo run --example origin_ws_tcp
 //!
-//! Every websocket or TCP stream opened by the edge is echoed byte-for-byte
-//! through a loopback TCP connection. The consumer owns the origin I/O: the
-//! handler dials its own origin and hands the transport a raw duplex.
+//! Every websocket stream is echoed through a loopback TCP connection and
+//! every TCP stream through an in-process duplex pair. Both origins hand
+//! the transport a raw duplex; the socket and the virtual origin are built
+//! the same way with `Duplex::from_stream`.
 
 use libcfd::{
     Body, Duplex, EdgeConnector, EdgeOptions, HttpOrigin, Origin, QuickTunnelOptions, Request,
     Response, TcpOrigin, Transport, Tunnel, WebSocketConnection, WebSocketOrigin,
     create_quick_tunnel, websocket_accept,
 };
-use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 #[derive(Clone)]
 struct HelloOrigin;
@@ -35,13 +37,12 @@ impl HttpOrigin for HelloOrigin {
 /// loopback TCP connection to `addr`.
 #[derive(Clone)]
 struct EchoWebSocketOrigin {
-    addr: std::net::SocketAddr,
+    address: std::net::SocketAddr,
 }
 
 impl WebSocketOrigin for EchoWebSocketOrigin {
     async fn connect(&self, request: Request) -> Result<WebSocketConnection, libcfd::Error> {
-        let sock = tokio::net::TcpStream::connect(self.addr).await?;
-        let (r, w) = sock.into_split();
+        let sock = tokio::net::TcpStream::connect(self.address).await?;
         let mut headers = http::HeaderMap::new();
         let key = request
             .headers
@@ -58,22 +59,33 @@ impl WebSocketOrigin for EchoWebSocketOrigin {
                 headers,
                 Body::empty(),
             ),
-            origin: Duplex::new(r.compat(), w.compat_write()),
+            origin: Duplex::from_stream(sock.compat()),
         })
     }
 }
 
-/// Echoes the raw stream through a loopback TCP connection to `addr`.
+/// Echoes the raw stream through an in-process duplex pair: a virtual
+/// origin that never touches a socket.
 #[derive(Clone)]
-struct EchoTcpOrigin {
-    addr: std::net::SocketAddr,
-}
+struct VirtualEchoOrigin;
 
-impl TcpOrigin for EchoTcpOrigin {
+impl TcpOrigin for VirtualEchoOrigin {
     async fn connect(&self, _request: Request) -> Result<Duplex, libcfd::Error> {
-        let sock = tokio::net::TcpStream::connect(self.addr).await?;
-        let (r, w) = sock.into_split();
-        Ok(Duplex::new(r.compat(), w.compat_write()))
+        let (mut app_end, libcfd_end) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 8192];
+            loop {
+                match app_end.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if app_end.write_all(&buffer[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        Ok(Duplex::from_stream(libcfd_end.compat()))
     }
 }
 
@@ -87,7 +99,7 @@ async fn main() -> Result<(), libcfd::Error> {
     println!("tunnel created: {}", tunnel.url());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let addr = listener.local_addr()?;
+    let address = listener.local_addr()?;
     tokio::spawn(async move {
         loop {
             let (mut sock, _) = match listener.accept().await {
@@ -102,8 +114,8 @@ async fn main() -> Result<(), libcfd::Error> {
     });
 
     let origin = Origin::http(HelloOrigin)
-        .with_websocket(EchoWebSocketOrigin { addr })
-        .with_tcp(EchoTcpOrigin { addr });
+        .with_websocket(EchoWebSocketOrigin { address })
+        .with_tcp(VirtualEchoOrigin);
 
     let connector = EdgeConnector::new(EdgeOptions {
         transport: Transport::Quic,

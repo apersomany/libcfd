@@ -37,21 +37,21 @@ pub enum Error {
 
 #[cfg(quic_any)]
 impl From<boring::error::ErrorStack> for Error {
-    fn from(err: boring::error::ErrorStack) -> Self {
-        Self::Tls(err.to_string())
+    fn from(error: boring::error::ErrorStack) -> Self {
+        Self::Tls(error.to_string())
     }
 }
 
 #[cfg(quic_any)]
 impl From<quiche::Error> for Error {
-    fn from(err: quiche::Error) -> Self {
-        Self::Quic(err.to_string())
+    fn from(error: quiche::Error) -> Self {
+        Self::Quic(error.to_string())
     }
 }
 
 #[cfg(h2_any)]
 impl From<h2::Error> for Error {
-    fn from(err: h2::Error) -> Self {
-        Self::H2(err.to_string())
+    fn from(error: h2::Error) -> Self {
+        Self::H2(error.to_string())
     }
 }

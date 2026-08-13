@@ -10,7 +10,7 @@ use std::time::Duration;
 #[cfg(feature = "h2-edge")]
 use tokio::sync::Notify;
 
-use crate::edge::config::EdgeConfigHandler;
+use crate::edge::configuration::EdgeConfigurationHandler;
 use crate::edge::control::{self, RegistrationOptions};
 use crate::edge::event::Event;
 #[cfg(feature = "h2-edge")]
@@ -36,9 +36,9 @@ pub(crate) struct ServeAttempt {
 }
 
 impl ServeAttempt {
-    pub(crate) fn failed(err: Error) -> Self {
+    pub(crate) fn failed(error: Error) -> Self {
         Self {
-            result: Err(err),
+            result: Err(error),
             registered_at: None,
             quic_timed_out: false,
         }
@@ -47,17 +47,18 @@ impl ServeAttempt {
 
 /// Parameters an established edge connection needs to register, serve, and
 /// shut down.
-pub(crate) struct EdgeRunParams {
+pub(crate) struct EdgeRunParameters {
     /// The edge address (used as the QUIC `originLocalIp`).
     #[cfg_attr(not(feature = "quic-edge"), allow(dead_code))]
     pub edge: SocketAddr,
     pub tunnel: Arc<Tunnel>,
     pub origin: Arc<Origin>,
     pub shutdown: Arc<Event>,
-    pub config_json: Vec<u8>,
+    pub configuration_json: Vec<u8>,
     pub grace_period: Duration,
     pub attempt: u32,
-    pub on_remote_config: Option<Arc<dyn Fn(crate::edge::RemoteConfig) + Send + Sync>>,
+    pub on_remote_configuration:
+        Option<Arc<dyn Fn(crate::edge::RemoteConfiguration) + Send + Sync>>,
 }
 
 /// A transport-agnostic edge connection.
@@ -70,7 +71,7 @@ pub(crate) struct EdgeRunParams {
 pub(crate) trait EdgeConnection: Send {
     fn run(
         self: Box<Self>,
-        params: EdgeRunParams,
+        parameters: EdgeRunParameters,
     ) -> Pin<Box<dyn Future<Output = ServeAttempt> + Send + 'static>>;
 }
 
@@ -78,33 +79,38 @@ pub(crate) trait EdgeConnection: Send {
 impl EdgeConnection for QuicConnection {
     fn run(
         self: Box<Self>,
-        params: EdgeRunParams,
+        parameters: EdgeRunParameters,
     ) -> Pin<Box<dyn Future<Output = ServeAttempt> + Send + 'static>> {
-        Box::pin(run_quic(self, params))
+        Box::pin(run_quic(self, parameters))
     }
 }
 
 #[cfg(feature = "quic-edge")]
-async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAttempt {
-    let EdgeRunParams {
+async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters) -> ServeAttempt {
+    let EdgeRunParameters {
         edge,
         tunnel,
         origin,
         shutdown,
-        config_json,
+        configuration_json,
         grace_period,
         attempt,
-        on_remote_config,
-    } = params;
+        on_remote_configuration,
+    } = parameters;
     // cloudflared sends the edge address as the QUIC `originLocalIp`.
-    let reg_opts = RegistrationOptions {
+    let registration_options = RegistrationOptions {
         origin_local_ip: control::peer_ip_bytes(&edge),
-        num_previous_attempts: attempt.min(u8::MAX as u32) as u8,
+        number_previous_attempts: attempt.min(u8::MAX as u32) as u8,
         ..Default::default()
     };
     let (_details, client) = match tokio::time::timeout(
         control::RPC_TIMEOUT,
-        control::register(&conn, &tunnel, &reg_opts, &config_json),
+        control::register(
+            &connection,
+            &tunnel,
+            &registration_options,
+            &configuration_json,
+        ),
     )
     .await
     {
@@ -119,10 +125,13 @@ async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAtte
     );
     let registered_at = Some(std::time::Instant::now());
 
-    let conn = Arc::new(*conn);
-    let config_handler = Arc::new(EdgeConfigHandler::new(on_remote_config));
-    let mut serve_handle =
-        tokio::spawn(serve::serve_requests(conn.clone(), origin, config_handler));
+    let connection = Arc::new(*connection);
+    let configuration_handler = Arc::new(EdgeConfigurationHandler::new(on_remote_configuration));
+    let mut serve_handle = tokio::spawn(serve::serve_requests(
+        connection.clone(),
+        origin,
+        configuration_handler,
+    ));
 
     let serve_result = tokio::select! {
         _ = shutdown.notified() => None,
@@ -131,12 +140,11 @@ async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAtte
     let _ = control::unregister(client, grace_period).await;
     let shutdown_fired = shutdown.is_fired();
     if shutdown_fired {
-        // cloudflared waits out the grace period after unregistration so
-        // in-flight requests can finish before the connection is closed.
+        // cloudflared waits out the grace period after unregistration so in-flight requests finish before the connection closes.
         tokio::time::sleep(grace_period).await;
     }
-    let quic_timed_out = conn.inner.lock().unwrap().timed_out;
-    conn.close();
+    let quic_timed_out = connection.inner.lock().unwrap().timed_out;
+    connection.close();
     if !shutdown_fired {
         serve_handle.abort();
     }
@@ -157,27 +165,27 @@ async fn run_quic(conn: Box<QuicConnection>, params: EdgeRunParams) -> ServeAtte
 impl EdgeConnection for H2EdgeConnection {
     fn run(
         self: Box<Self>,
-        params: EdgeRunParams,
+        parameters: EdgeRunParameters,
     ) -> Pin<Box<dyn Future<Output = ServeAttempt> + Send + 'static>> {
-        Box::pin(run_h2(self, params))
+        Box::pin(run_h2(self, parameters))
     }
 }
 
 #[cfg(feature = "h2-edge")]
-async fn run_h2(conn: Box<H2EdgeConnection>, params: EdgeRunParams) -> ServeAttempt {
-    let EdgeRunParams {
+async fn run_h2(connection: Box<H2EdgeConnection>, parameters: EdgeRunParameters) -> ServeAttempt {
+    let EdgeRunParameters {
         tunnel,
         origin,
         shutdown,
-        config_json,
+        configuration_json,
         grace_period,
         attempt,
-        on_remote_config,
+        on_remote_configuration,
         ..
-    } = params;
-    let reg_opts = RegistrationOptions {
-        origin_local_ip: conn.local_ip.clone(),
-        num_previous_attempts: attempt.min(u8::MAX as u32) as u8,
+    } = parameters;
+    let registration_options = RegistrationOptions {
+        origin_local_ip: connection.local_ip.clone(),
+        number_previous_attempts: attempt.min(u8::MAX as u32) as u8,
         ..Default::default()
     };
     let registered = Event::new();
@@ -185,18 +193,17 @@ async fn run_h2(conn: Box<H2EdgeConnection>, params: EdgeRunParams) -> ServeAtte
     let shared = Arc::new(H2Shared {
         tunnel,
         origin,
-        reg_opts: Arc::new(reg_opts),
-        config_json: Arc::new(config_json),
-        config_handler: Arc::new(EdgeConfigHandler::new(on_remote_config)),
+        registration_options: Arc::new(registration_options),
+        configuration_json: Arc::new(configuration_json),
+        configuration_handler: Arc::new(EdgeConfigurationHandler::new(on_remote_configuration)),
         shutdown: shutdown.clone(),
         control_shutdown: Arc::new(Notify::new()),
         registered,
         grace_period,
     });
-    let mut serve_handle = tokio::spawn(conn.serve(shared));
+    let mut serve_handle = tokio::spawn(connection.serve(shared));
 
-    // Registration completes on the control stream inside serve(); wait
-    // for it so the reconnect backoff can be reset on success.
+    // Registration completes inside serve(); wait for it so the reconnect backoff resets on success.
     let registered_at = match tokio::time::timeout(control::RPC_TIMEOUT, async {
         let signal = registered_wait;
         signal.notified().await;
@@ -209,8 +216,7 @@ async fn run_h2(conn: Box<H2EdgeConnection>, params: EdgeRunParams) -> ServeAtte
 
     let serve_result = tokio::select! {
         _ = shutdown.notified() => {
-            // serve() breaks on shutdown and drains in-flight streams
-            // and the unregister RPC; give it the grace period to finish.
+            // serve() breaks on shutdown and drains in-flight streams plus the unregister RPC; give it the grace period to finish.
             match tokio::time::timeout(grace_period, &mut serve_handle).await {
                 Ok(Ok(Ok(()))) => None,
                 Ok(Ok(Err(e))) => {

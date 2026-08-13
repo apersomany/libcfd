@@ -5,8 +5,9 @@
 .envrc
 .direnv
 
-# Orchestration scratch dir
+# Orchestration scratch dirs
 .pi-subagents/
+.pi/
 
 # Live-test tunnel credentials (real secrets; never commit)
 .test-creds/

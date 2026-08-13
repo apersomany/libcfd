@@ -3,7 +3,7 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use futures_util::io::{AsyncRead, AsyncWrite};
+use futures_util::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
 use crate::origin::http::body::Response;
 
@@ -35,6 +35,19 @@ impl Duplex {
         }
     }
 
+    /// Builds a duplex from a single bidirectional stream, splitting it into
+    /// read and write halves internally.
+    pub fn from_stream<S>(stream: S) -> Self
+    where
+        S: AsyncRead + AsyncWrite + Send + 'static,
+    {
+        let (read, write) = stream.split();
+        Self {
+            read: Box::pin(read),
+            write: Box::pin(write),
+        }
+    }
+
     /// Splits the duplex back into its read and write halves.
     pub fn into_parts(self) -> (ReadHalf, WriteHalf) {
         (self.read, self.write)
@@ -45,9 +58,9 @@ impl AsyncRead for Duplex {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        buffer: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        self.read.as_mut().poll_read(cx, buf)
+        self.read.as_mut().poll_read(cx, buffer)
     }
 }
 
@@ -55,9 +68,9 @@ impl AsyncWrite for Duplex {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &[u8],
+        buffer: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        self.write.as_mut().poll_write(cx, buf)
+        self.write.as_mut().poll_write(cx, buffer)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {

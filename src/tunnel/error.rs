@@ -23,5 +23,5 @@ pub enum Error {
     NamedTunnelCredentials(String),
     /// A tunnel id could not be parsed as a UUID.
     #[error("invalid tunnel id: {0}")]
-    InvalidTunnelId(String),
+    InvalidTunnelIdentifier(String),
 }

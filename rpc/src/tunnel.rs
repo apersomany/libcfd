@@ -13,9 +13,9 @@ pub const METHOD_UPDATE_LOCAL_CONFIGURATION: u16 = 2;
 
 /// The client's connector identity, sent as `ConnectionOptions.client`.
 #[derive(Debug, Clone, Default)]
-pub struct ClientInfo {
+pub struct ClientInformation {
     /// 16-byte connector UUID.
-    pub client_id: Vec<u8>,
+    pub client_identifier: Vec<u8>,
     /// Feature flags the connector advertises (e.g. `serialized_headers`).
     pub features: Vec<String>,
     /// The client version string.
@@ -28,7 +28,7 @@ pub struct ClientInfo {
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionOptions {
     /// The connector identity advertised to the edge.
-    pub client: ClientInfo,
+    pub client: ClientInformation,
     /// Raw IP bytes of the local edge-facing address.
     pub origin_local_ip: Vec<u8>,
     /// Whether to replace an existing connection for the same tunnel.
@@ -36,7 +36,7 @@ pub struct ConnectionOptions {
     /// The compression quality to use (0 disables it).
     pub compression_quality: u8,
     /// How many previous connection attempts this process made.
-    pub num_previous_attempts: u8,
+    pub number_previous_attempts: u8,
 }
 
 /// Credentials proving ownership of the tunnel.
@@ -102,12 +102,12 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
     pub async fn register_connection(
         &mut self,
         auth: TunnelAuth,
-        tunnel_id: &[u8],
-        conn_index: u8,
+        tunnel_identifier: &[u8],
+        connection_index: u8,
         options: &ConnectionOptions,
     ) -> Result<ConnectionResponse> {
         let auth_ = auth;
-        let tunnel_id = tunnel_id.to_vec();
+        let tunnel_identifier = tunnel_identifier.to_vec();
         let options = options.clone();
         self.rpc
             .call(
@@ -115,44 +115,44 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
                 REGISTRATION_SERVER_INTERFACE_ID,
                 METHOD_REGISTER_CONNECTION,
                 |payload| {
-                    let mut params = payload
+                    let mut parameters = payload
                         .reborrow()
                         .init_content()
                         .init_as::<tunnelrpc_capnp::registration_server::register_connection_params::Builder>();
                     {
-                        let mut a = params.reborrow().init_auth();
+                        let mut a = parameters.reborrow().init_auth();
                         a.set_account_tag(&auth_.account_tag);
                         a.set_tunnel_secret(&auth_.tunnel_secret);
                     }
-                    params.set_tunnel_id(&tunnel_id);
-                    params.set_conn_index(conn_index);
+                    parameters.set_tunnel_id(&tunnel_identifier);
+                    parameters.set_conn_index(connection_index);
                     {
-                        let mut o = params.reborrow().init_options();
+                        let mut o = parameters.reborrow().init_options();
                         let mut c = o.reborrow().init_client();
-                        c.set_client_id(&options.client.client_id);
-                        let mut feats = c
+                        c.set_client_id(&options.client.client_identifier);
+                        let mut features = c
                             .reborrow()
                             .init_features(options.client.features.len() as u32);
                         for (i, f) in options.client.features.iter().enumerate() {
-                            feats.set(i as u32, f);
+                            features.set(i as u32, f);
                         }
                         c.set_version(&options.client.version);
                         c.set_arch(&options.client.arch);
                         o.set_origin_local_ip(&options.origin_local_ip);
                         o.set_replace_existing(options.replace_existing);
                         o.set_compression_quality(options.compression_quality);
-                        o.set_num_previous_attempts(options.num_previous_attempts);
+                        o.set_num_previous_attempts(options.number_previous_attempts);
                     }
                     payload.reborrow().init_cap_table(0);
                     Ok(())
                 },
                 |results| {
-                    let rres = results
+                    let results_reader = results
                         .reborrow()
                         .get_content()
                         .get_as::<tunnelrpc_capnp::registration_server::register_connection_results::Reader<'_>>()?;
-                    let conn_resp = rres.reborrow().get_result()?;
-                    match conn_resp.reborrow().get_result().which()? {                        tunnelrpc_capnp::connection_response::result::Error(e) => {
+                    let connection_response = results_reader.reborrow().get_result()?;
+                    match connection_response.reborrow().get_result().which()? {                        tunnelrpc_capnp::connection_response::result::Error(e) => {
                             let e = e?;
                             Ok(ConnectionResponse::Error(ConnectionError {
                                 cause: e.get_cause()?.to_str()?.to_string(),
@@ -197,19 +197,19 @@ impl<S: crate::io::AsyncStream + Unpin> TunnelClient<S> {
 
     /// Pushes the local configuration to the edge via
     /// `updateLocalConfiguration` (for locally-managed tunnels).
-    pub async fn update_local_configuration(&mut self, config: &[u8]) -> Result<()> {
-        let config = config.to_vec();
+    pub async fn update_local_configuration(&mut self, configuration: &[u8]) -> Result<()> {
+        let configuration = configuration.to_vec();
         self.rpc
             .call(
                 0,
                 REGISTRATION_SERVER_INTERFACE_ID,
                 METHOD_UPDATE_LOCAL_CONFIGURATION,
                 |payload| {
-                    let mut params = payload
+                    let mut parameters = payload
                         .reborrow()
                         .init_content()
                         .init_as::<tunnelrpc_capnp::registration_server::update_local_configuration_params::Builder>();
-                    params.set_config(&config);
+                    parameters.set_config(&configuration);
                     payload.reborrow().init_cap_table(0);
                     Ok(())
                 },

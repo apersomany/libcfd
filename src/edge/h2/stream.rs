@@ -18,54 +18,54 @@ use h2::RecvStream;
 ///
 /// Releases flow-control capacity as chunks are consumed so the edge can
 /// keep sending.
-pub(crate) struct RecvStreamReader {
-    recv: RecvStream,
+pub(crate) struct ReceiveStreamReader {
+    receive: RecvStream,
     chunk: Option<Bytes>,
-    pos: usize,
+    position: usize,
     eof: bool,
 }
 
-impl RecvStreamReader {
-    pub(crate) fn new(recv: RecvStream) -> Self {
+impl ReceiveStreamReader {
+    pub(crate) fn new(receive: RecvStream) -> Self {
         Self {
-            recv,
+            receive,
             chunk: None,
-            pos: 0,
+            position: 0,
             eof: false,
         }
     }
 }
 
-impl AsyncRead for RecvStreamReader {
+impl AsyncRead for ReceiveStreamReader {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         loop {
             if self.eof {
                 return Poll::Ready(Ok(0));
             }
             if let Some(chunk) = self.chunk.take() {
-                if self.pos < chunk.len() {
-                    let n = std::cmp::min(chunk.len() - self.pos, buf.len());
-                    buf[..n].copy_from_slice(&chunk[self.pos..self.pos + n]);
-                    self.pos += n;
-                    if self.pos < chunk.len() {
+                if self.position < chunk.len() {
+                    let n = std::cmp::min(chunk.len() - self.position, buffer.len());
+                    buffer[..n].copy_from_slice(&chunk[self.position..self.position + n]);
+                    self.position += n;
+                    if self.position < chunk.len() {
                         self.chunk = Some(chunk);
                     } else {
                         let used = chunk.len();
-                        if let Err(e) = self.recv.flow_control().release_capacity(used) {
+                        if let Err(e) = self.receive.flow_control().release_capacity(used) {
                             return Poll::Ready(Err(io::Error::other(e)));
                         }
                         self.chunk = None;
-                        self.pos = 0;
+                        self.position = 0;
                     }
                     return Poll::Ready(Ok(n));
                 }
-                self.pos = 0;
+                self.position = 0;
             }
-            match Pin::new(&mut self.recv).poll_data(cx) {
+            match Pin::new(&mut self.receive).poll_data(cx) {
                 Poll::Ready(Some(Ok(chunk))) => {
                     self.chunk = Some(chunk);
                 }
@@ -104,7 +104,7 @@ impl AsyncWrite for SendStreamWriter {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &[u8],
+        buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
         if self.closed {
             return Poll::Ready(Err(io::Error::new(
@@ -112,11 +112,11 @@ impl AsyncWrite for SendStreamWriter {
                 "stream already closed",
             )));
         }
-        if buf.is_empty() {
+        if buffer.is_empty() {
             return Poll::Ready(Ok(0));
         }
         if self.send.capacity() == 0 {
-            self.send.reserve_capacity(buf.len());
+            self.send.reserve_capacity(buffer.len());
             match Pin::new(&mut self.send).poll_capacity(cx) {
                 Poll::Ready(Some(Ok(_))) => {}
                 Poll::Ready(None) => {
@@ -131,10 +131,10 @@ impl AsyncWrite for SendStreamWriter {
                 Poll::Pending => return Poll::Pending,
             }
         }
-        let n = std::cmp::min(buf.len(), self.send.capacity());
+        let n = std::cmp::min(buffer.len(), self.send.capacity());
         match self
             .send
-            .send_data(Bytes::copy_from_slice(&buf[..n]), false)
+            .send_data(Bytes::copy_from_slice(&buffer[..n]), false)
         {
             Ok(()) => Poll::Ready(Ok(n)),
             Err(e) => Poll::Ready(Err(io::Error::other(e))),
@@ -156,37 +156,37 @@ impl AsyncWrite for SendStreamWriter {
 
 /// A bidirectional stream over an HTTP/2 request/response pair, used to
 /// carry the registration RPC on the control-stream request.
-pub(crate) struct H2Bidi {
-    read: RecvStreamReader,
+pub(crate) struct H2Bidirectional {
+    read: ReceiveStreamReader,
     write: SendStreamWriter,
 }
 
-impl H2Bidi {
-    pub(crate) fn new(recv: RecvStream, send: h2::SendStream<Bytes>) -> Self {
+impl H2Bidirectional {
+    pub(crate) fn new(receive: RecvStream, send: h2::SendStream<Bytes>) -> Self {
         Self {
-            read: RecvStreamReader::new(recv),
+            read: ReceiveStreamReader::new(receive),
             write: SendStreamWriter::new(send),
         }
     }
 }
 
-impl AsyncRead for H2Bidi {
+impl AsyncRead for H2Bidirectional {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().read).poll_read(cx, buf)
+        Pin::new(&mut self.get_mut().read).poll_read(cx, buffer)
     }
 }
 
-impl AsyncWrite for H2Bidi {
+impl AsyncWrite for H2Bidirectional {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &[u8],
+        buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().write).poll_write(cx, buf)
+        Pin::new(&mut self.get_mut().write).poll_write(cx, buffer)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

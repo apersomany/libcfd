@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::edge::RemoteConfig;
+use crate::edge::RemoteConfiguration;
 
 /// The transport used for a tunnel connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +31,7 @@ pub struct EdgeOptions {
     pub ca_cert_pem: Option<Vec<u8>>,
     /// JSON configuration pushed to the edge via `updateLocalConfiguration`
     /// for locally-managed tunnels.
-    pub config_json: Vec<u8>,
+    pub configuration_json: Vec<u8>,
     /// Per-connection establishment timeout.
     pub connect_timeout: Duration,
     /// Base reconnect delay between failed attempts (exponential backoff).
@@ -42,10 +42,10 @@ pub struct EdgeOptions {
     pub grace_period: Duration,
     /// QUIC failures before `Transport::Auto` falls back to HTTP/2.
     /// Cloudflared's default retry count is 5.
-    pub max_quic_failures: u8,
+    pub maximum_quic_failures: u8,
     /// Called with each configuration the edge pushes for a
     /// remotely-managed tunnel (e.g. the hostnames routed to it).
-    pub on_remote_config: Option<Arc<dyn Fn(RemoteConfig) + Send + Sync>>,
+    pub on_remote_configuration: Option<Arc<dyn Fn(RemoteConfiguration) + Send + Sync>>,
 }
 
 impl std::fmt::Debug for EdgeOptions {
@@ -54,14 +54,14 @@ impl std::fmt::Debug for EdgeOptions {
             .field("transport", &self.transport)
             .field("region", &self.region)
             .field("ca_cert_pem", &self.ca_cert_pem)
-            .field("config_json", &self.config_json)
+            .field("configuration_json", &self.configuration_json)
             .field("connect_timeout", &self.connect_timeout)
             .field("backoff", &self.backoff)
             .field("grace_period", &self.grace_period)
-            .field("max_quic_failures", &self.max_quic_failures)
+            .field("maximum_quic_failures", &self.maximum_quic_failures)
             .field(
-                "on_remote_config",
-                &self.on_remote_config.as_ref().map(|_| "<callback>"),
+                "on_remote_configuration",
+                &self.on_remote_configuration.as_ref().map(|_| "<callback>"),
             )
             .finish()
     }
@@ -73,12 +73,12 @@ impl Default for EdgeOptions {
             transport: default_transport(),
             region: None,
             ca_cert_pem: None,
-            config_json: default_config_json().into(),
+            configuration_json: default_configuration_json().into(),
             connect_timeout: Duration::from_secs(15),
             backoff: Duration::from_secs(1),
             grace_period: Duration::from_secs(30),
-            max_quic_failures: 5,
-            on_remote_config: None,
+            maximum_quic_failures: 5,
+            on_remote_configuration: None,
         }
     }
 }
@@ -102,7 +102,7 @@ fn default_transport() -> Transport {
 
 /// The default local configuration payload, matching the shape cloudflared
 /// sends for a quick tunnel (a single catch-all ingress rule).
-pub fn default_config_json() -> &'static str {
+pub fn default_configuration_json() -> &'static str {
     r#"{"ingress":[{"hostname":"","service":"http://127.0.0.1:8080"}],"warp-routing":{}}"#
 }
 
@@ -112,7 +112,7 @@ pub fn default_config_json() -> &'static str {
 pub(crate) fn select_transport(
     requested: Transport,
     quic_failures: u8,
-    max_quic_failures: u8,
+    maximum_quic_failures: u8,
 ) -> Transport {
     match requested {
         #[cfg(feature = "quic-edge")]
@@ -121,7 +121,7 @@ pub(crate) fn select_transport(
         Transport::H2 => Transport::H2,
         #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
         Transport::Auto => {
-            if quic_failures >= max_quic_failures {
+            if quic_failures >= maximum_quic_failures {
                 Transport::H2
             } else {
                 Transport::Quic
@@ -135,7 +135,7 @@ pub(crate) fn select_transport(
 pub(crate) fn select_transport(
     requested: Transport,
     _quic_failures: u8,
-    _max_quic_failures: u8,
+    _maximum_quic_failures: u8,
 ) -> Transport {
     match requested {
         Transport::H2 => Transport::H2,
@@ -154,7 +154,7 @@ mod tests {
 
     #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
     #[test]
-    fn auto_falls_back_after_max_failures() {
+    fn auto_falls_back_after_maximum_failures() {
         assert_eq!(select_transport(Transport::Auto, 0, 5), Transport::Quic);
         assert_eq!(select_transport(Transport::Auto, 4, 5), Transport::Quic);
         assert_eq!(select_transport(Transport::Auto, 5, 5), Transport::H2);
@@ -188,6 +188,6 @@ mod tests {
     #[test]
     fn default_backoff_matches_cloudflared() {
         assert_eq!(EdgeOptions::default().backoff, Duration::from_secs(1));
-        assert_eq!(EdgeOptions::default().max_quic_failures, 5);
+        assert_eq!(EdgeOptions::default().maximum_quic_failures, 5);
     }
 }

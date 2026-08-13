@@ -13,9 +13,9 @@ use crate::origin::Response;
 /// The header carrying base64-serialized origin user headers.
 pub(crate) const RESPONSE_USER_HEADERS: &str = "cf-cloudflared-response-headers";
 /// The response meta header (Go canonicalizes to `Cf-Cloudflared-Response-Meta`).
-pub(crate) const RESPONSE_META_HEADER: &str = "cf-cloudflared-response-meta";
+pub(crate) const RESPONSE_METADATA_HEADER: &str = "cf-cloudflared-response-meta";
 /// The meta value cloudflared sets when the response comes from the origin.
-const RESPONSE_META_ORIGIN: &str = r#"{"src":"origin"}"#;
+const RESPONSE_METADATA_ORIGIN: &str = r#"{"src":"origin"}"#;
 /// The internal upgrade header used to classify edge-initiated streams.
 pub(crate) const INTERNAL_UPGRADE_HEADER: &str = "cf-cloudflared-proxy-connection-upgrade";
 pub(crate) const INTERNAL_TCP_SRC_HEADER: &str = "cf-cloudflared-proxy-src";
@@ -33,9 +33,9 @@ pub(crate) fn serialize_headers(headers: &[(String, String)]) -> String {
         if !out.is_empty() {
             out.push(';');
         }
-        out.push_str(&encode_b64(name));
+        out.push_str(&encode_base64(name));
         out.push(':');
-        out.push_str(&encode_b64(value));
+        out.push_str(&encode_base64(value));
     }
     out
 }
@@ -51,10 +51,10 @@ pub(crate) fn deserialize_headers(serialized: &str) -> Vec<(String, String)> {
         let Some((name, value)) = pair.split_once(':') else {
             continue;
         };
-        let Ok(name) = decode_b64(name) else {
+        let Ok(name) = decode_base64(name) else {
             continue;
         };
-        let Ok(value) = decode_b64(value) else {
+        let Ok(value) = decode_base64(value) else {
             continue;
         };
         out.push((name, value));
@@ -62,12 +62,12 @@ pub(crate) fn deserialize_headers(serialized: &str) -> Vec<(String, String)> {
     out
 }
 
-fn encode_b64(input: &str) -> String {
+fn encode_base64(input: &str) -> String {
     base64::engine::general_purpose::STANDARD_NO_PAD.encode(input.as_bytes())
 }
 
 #[cfg(test)]
-fn decode_b64(input: &str) -> Result<String, base64::DecodeError> {
+fn decode_base64(input: &str) -> Result<String, base64::DecodeError> {
     let bytes = base64::engine::general_purpose::STANDARD_NO_PAD.decode(input)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
@@ -102,8 +102,8 @@ pub(crate) fn encode_response_headers(response: &Response) -> http::HeaderMap {
         );
     }
     headers.insert(
-        RESPONSE_META_HEADER,
-        http::HeaderValue::from_static(RESPONSE_META_ORIGIN),
+        RESPONSE_METADATA_HEADER,
+        http::HeaderValue::from_static(RESPONSE_METADATA_ORIGIN),
     );
     headers
 }
@@ -158,8 +158,8 @@ mod tests {
             "content-length passes through as a real header"
         );
         assert_eq!(
-            headers.get(RESPONSE_META_HEADER).unwrap(),
-            RESPONSE_META_ORIGIN
+            headers.get(RESPONSE_METADATA_HEADER).unwrap(),
+            RESPONSE_METADATA_ORIGIN
         );
         let serialized = headers
             .get(RESPONSE_USER_HEADERS)

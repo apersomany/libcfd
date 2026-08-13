@@ -65,8 +65,7 @@ impl HttpOrigin for AxumOrigin {
         *axum_request.headers_mut() = headers;
 
         let mut service = self.router.clone();
-        // Router::call is infallible; axum converts handler errors into
-        // responses.
+        // Router::call is infallible; axum converts handler errors into responses.
         let axum_response = tower::Service::call(&mut service, axum_request)
             .await
             .map_err(|e| Error::origin_handler(format!("axum router failed: {e}")))?;
@@ -80,16 +79,16 @@ impl HttpOrigin for AxumOrigin {
 /// Streams a libcfd [`Body`] as `Result<Bytes, _>` chunks for axum.
 struct BodyReadStream {
     body: Option<Body>,
-    buf: [u8; 8192],
-    len: usize,
+    buffer: [u8; 8192],
+    length: usize,
 }
 
 impl BodyReadStream {
     fn new(body: Body) -> Self {
         Self {
             body: Some(body),
-            buf: [0u8; 8192],
-            len: 0,
+            buffer: [0u8; 8192],
+            length: 0,
         }
     }
 }
@@ -98,18 +97,22 @@ impl Stream for BodyReadStream {
     type Item = std::result::Result<Bytes, axum::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.len == 0 {
-            let Self { body, buf, len } = self.as_mut().get_mut();
+        if self.length == 0 {
+            let Self {
+                body,
+                buffer,
+                length,
+            } = self.as_mut().get_mut();
             let body = body.as_mut().expect("polled after stream end");
-            match Pin::new(body).poll_read(cx, buf) {
+            match Pin::new(body).poll_read(cx, buffer) {
                 Poll::Ready(Ok(0)) => return Poll::Ready(None),
-                Poll::Ready(Ok(n)) => *len = n,
+                Poll::Ready(Ok(n)) => *length = n,
                 Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(axum::Error::new(e)))),
                 Poll::Pending => return Poll::Pending,
             }
         }
-        let chunk = Bytes::copy_from_slice(&self.buf[..self.len]);
-        self.len = 0;
+        let chunk = Bytes::copy_from_slice(&self.buffer[..self.length]);
+        self.length = 0;
         Poll::Ready(Some(Ok(chunk)))
     }
 }
@@ -118,7 +121,7 @@ impl Stream for BodyReadStream {
 struct AxumBodyReader {
     stream: Pin<Box<BodyDataStream>>,
     chunk: Option<Bytes>,
-    pos: usize,
+    position: usize,
     eof: bool,
 }
 
@@ -127,7 +130,7 @@ impl AxumBodyReader {
         Self {
             stream: Box::pin(stream),
             chunk: None,
-            pos: 0,
+            position: 0,
             eof: false,
         }
     }
@@ -137,23 +140,23 @@ impl AsyncRead for AxumBodyReader {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        buffer: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
         loop {
             if self.eof {
                 return Poll::Ready(Ok(0));
             }
             if let Some(chunk) = self.chunk.take() {
-                if self.pos < chunk.len() {
-                    let n = std::cmp::min(chunk.len() - self.pos, buf.len());
-                    buf[..n].copy_from_slice(&chunk[self.pos..self.pos + n]);
-                    self.pos += n;
-                    if self.pos < chunk.len() {
+                if self.position < chunk.len() {
+                    let n = std::cmp::min(chunk.len() - self.position, buffer.len());
+                    buffer[..n].copy_from_slice(&chunk[self.position..self.position + n]);
+                    self.position += n;
+                    if self.position < chunk.len() {
                         self.chunk = Some(chunk);
                     }
                     return Poll::Ready(Ok(n));
                 }
-                self.pos = 0;
+                self.position = 0;
             }
             match self.stream.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(chunk))) => self.chunk = Some(chunk),

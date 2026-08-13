@@ -22,21 +22,21 @@ where
     let mut edge_write = edge_write;
     let mut edge_done = false;
     let mut origin_done = false;
-    let mut e_buf = [0u8; 8192];
-    let mut o_buf = [0u8; 8192];
+    let mut edge_buffer = [0u8; 8192];
+    let mut origin_buffer = [0u8; 8192];
     loop {
         if edge_done && origin_done {
             break;
         }
         tokio::select! {
-            read = edge_read.read(&mut e_buf), if !edge_done => {
+            read = edge_read.read(&mut edge_buffer), if !edge_done => {
                 match read {
                     Ok(0) => {
                         edge_done = true;
                         let _ = origin_write.close().await;
                     }
                     Ok(n) => {
-                        if let Err(e) = origin_write.write_all(&e_buf[..n]).await {
+                        if let Err(e) = origin_write.write_all(&edge_buffer[..n]).await {
                             tracing::debug!("origin write failed: {e}");
                             edge_done = true;
                         }
@@ -47,14 +47,14 @@ where
                     }
                 }
             }
-            read = origin_read.read(&mut o_buf), if !origin_done => {
+            read = origin_read.read(&mut origin_buffer), if !origin_done => {
                 match read {
                     Ok(0) => {
                         origin_done = true;
                         let _ = edge_write.close().await;
                     }
                     Ok(n) => {
-                        if let Err(e) = edge_write.write_all(&o_buf[..n]).await {
+                        if let Err(e) = edge_write.write_all(&origin_buffer[..n]).await {
                             tracing::debug!("edge write failed: {e}");
                             origin_done = true;
                         }

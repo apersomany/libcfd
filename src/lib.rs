@@ -46,11 +46,7 @@
 //!   `RegistrationFailure`;
 //! - `tracing` is used for diagnostics and no global subscriber is installed.
 
-// The `edge_conn` cfg (any tunnel feature with any edge transport feature) is
-// emitted by build.rs; the transport modules below only compile when a tunnel
-// feature is present because `edge::h2` and `edge::serve` use
-// `edge::control` and `crate::tunnel`, keeping every feature combination
-// buildable.
+// The edge_conn cfg (any tunnel + any edge transport) is emitted by build.rs; transports compile only with a tunnel feature so every feature combination stays buildable.
 #[cfg(edge_conn)]
 pub mod edge;
 mod error;
@@ -61,7 +57,9 @@ mod run;
 pub mod tunnel;
 
 #[cfg(edge_conn)]
-pub use edge::{EdgeConnector, EdgeOptions, RemoteConfig, Transport, default_config_json};
+pub use edge::{
+    EdgeConnector, EdgeOptions, RemoteConfiguration, Transport, default_configuration_json,
+};
 pub use error::Error;
 #[cfg(feature = "axum-origin")]
 pub use origin::axum::AxumOrigin;

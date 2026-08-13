@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-use super::parse_tunnel_id;
+use super::parse_tunnel_identifier;
 
 /// Default quick tunnel service (trycloudflare.com).
 pub const DEFAULT_QUICK_SERVICE_URL: &str = "https://api.trycloudflare.com";
@@ -39,7 +39,8 @@ impl Default for QuickTunnelOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuickTunnel {
     /// The tunnel id as a UUID string.
-    pub tunnel_id: String,
+    #[serde(rename = "tunnel_id")]
+    pub tunnel_identifier: String,
     /// The tunnel name assigned by the service.
     pub name: String,
     /// The public hostname.
@@ -62,8 +63,8 @@ impl QuickTunnel {
     }
 
     /// The 16-byte tunnel id, as parsed from the API response.
-    pub fn tunnel_id_bytes(&self) -> Result<[u8; 16]> {
-        parse_tunnel_id(&self.tunnel_id)
+    pub fn tunnel_identifier_bytes(&self) -> Result<[u8; 16]> {
+        parse_tunnel_identifier(&self.tunnel_identifier)
     }
 }
 
@@ -80,7 +81,8 @@ struct QuickTunnelResponse {
 #[derive(Debug, Deserialize)]
 struct QuickTunnelResult {
     #[serde(default)]
-    id: String,
+    #[serde(rename = "id")]
+    identifier: String,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -130,13 +132,13 @@ pub async fn create_quick_tunnel(options: &QuickTunnelOptions) -> Result<QuickTu
     let result = data
         .result
         .ok_or_else(|| Error::quick_tunnel_response("response has no result"))?;
-    if result.id.is_empty() || result.hostname.is_empty() {
+    if result.identifier.is_empty() || result.hostname.is_empty() {
         return Err(Error::quick_tunnel_response(
             "response result is missing id or hostname",
         ));
     }
     Ok(QuickTunnel {
-        tunnel_id: result.id,
+        tunnel_identifier: result.identifier,
         name: result.name,
         hostname: result.hostname,
         account_tag: result.account_tag,
@@ -150,7 +152,7 @@ mod tests {
 
     fn quick() -> QuickTunnel {
         QuickTunnel {
-            tunnel_id: "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f".into(),
+            tunnel_identifier: "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f".into(),
             name: String::new(),
             hostname: "abc.trycloudflare.com".into(),
             account_tag: "tag".into(),

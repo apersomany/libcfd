@@ -24,7 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use libcfd::{
-    Body, EdgeConnector, EdgeOptions, HttpOrigin, NamedTunnel, RemoteConfig, Response, Tunnel,
+    Body, EdgeConnector, EdgeOptions, HttpOrigin, NamedTunnel, RemoteConfiguration, Response,
+    Tunnel,
 };
 
 /// How long to keep polling a public hostname for the origin response.
@@ -77,19 +78,19 @@ async fn https_get(url: &str) -> Result<(u16, Vec<u8>), String> {
 
     let mut store = rustls::RootCertStore::empty();
     store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = rustls::ClientConfig::builder()
+    let configuration = rustls::ClientConfig::builder()
         .with_root_certificates(store)
         .with_no_client_auth();
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(configuration));
 
-    let addr = tokio::net::lookup_host((host.as_str(), port))
+    let address = tokio::net::lookup_host((host.as_str(), port))
         .await
         .map_err(|e| format!("resolve {host}: {e}"))?
         .next()
         .ok_or_else(|| format!("no address for {host}"))?;
-    let tcp = TcpStream::connect(addr)
+    let tcp = TcpStream::connect(address)
         .await
-        .map_err(|e| format!("tcp connect {addr}: {e}"))?;
+        .map_err(|e| format!("tcp connect {address}: {e}"))?;
     let mut stream = connector
         .connect(server_name, tcp)
         .await
@@ -102,17 +103,17 @@ async fn https_get(url: &str) -> Result<(u16, Vec<u8>), String> {
         .write_all(request.as_bytes())
         .await
         .map_err(|e| format!("write request: {e}"))?;
-    let mut buf = Vec::new();
+    let mut buffer = Vec::new();
     stream
-        .read_to_end(&mut buf)
+        .read_to_end(&mut buffer)
         .await
         .map_err(|e| format!("read response: {e}"))?;
 
-    let header_end = buf
+    let header_end = buffer
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .ok_or_else(|| "response has no header terminator".to_string())?;
-    let head = std::str::from_utf8(&buf[..header_end])
+    let head = std::str::from_utf8(&buffer[..header_end])
         .map_err(|e| format!("response head is not utf-8: {e}"))?;
     let status: u16 = head
         .lines()
@@ -120,7 +121,7 @@ async fn https_get(url: &str) -> Result<(u16, Vec<u8>), String> {
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse().ok())
         .ok_or_else(|| format!("malformed status line {head:?}"))?;
-    let body = buf[header_end + 4..].to_vec();
+    let body = buffer[header_end + 4..].to_vec();
     Ok((status, body))
 }
 
@@ -175,21 +176,21 @@ async fn main() -> Result<(), libcfd::Error> {
     };
     println!(
         "loaded named tunnel {} (account {})",
-        tunnel.tunnel_id, tunnel.account_tag
+        tunnel.tunnel_identifier, tunnel.account_tag
     );
 
     let hostnames: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let verifier_hostnames = hostnames.clone();
-    let on_remote_config = move |config: RemoteConfig| {
+    let on_remote_configuration = move |configuration: RemoteConfiguration| {
         let mut guard = verifier_hostnames.lock().expect("hostnames lock");
-        guard.extend(config.hostnames.iter().cloned());
+        guard.extend(configuration.hostnames.iter().cloned());
         println!(
             "edge pushed remote configuration (version {}): hostnames {:?}",
-            config.version, config.hostnames
+            configuration.version, configuration.hostnames
         );
     };
     let options = libcfd::EdgeOptions {
-        on_remote_config: Some(Arc::new(on_remote_config)),
+        on_remote_configuration: Some(Arc::new(on_remote_configuration)),
         ..EdgeOptions::default()
     };
 
@@ -203,8 +204,7 @@ async fn main() -> Result<(), libcfd::Error> {
     };
 
     let verify = tokio::spawn(async move {
-        // Wait until the edge pushes the tunnel configuration (first
-        // config push also proves the registration was accepted).
+        // Wait for the first config push from the edge; it also proves the registration was accepted.
         loop {
             let current = hostnames.lock().expect("hostnames lock").clone();
             if !current.is_empty() {

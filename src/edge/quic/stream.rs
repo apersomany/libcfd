@@ -23,16 +23,20 @@ use super::Inner;
 pub(crate) struct QuicStream {
     inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
-    stream_id: u64,
+    stream_identifier: u64,
     read_eof: bool,
 }
 
 impl QuicStream {
-    pub(crate) fn new(inner: Arc<Mutex<Inner>>, notify: Arc<Notify>, stream_id: u64) -> Self {
+    pub(crate) fn new(
+        inner: Arc<Mutex<Inner>>,
+        notify: Arc<Notify>,
+        stream_identifier: u64,
+    ) -> Self {
         Self {
             inner,
             notify,
-            stream_id,
+            stream_identifier,
             read_eof: false,
         }
     }
@@ -41,7 +45,7 @@ impl QuicStream {
     pub(crate) fn finish(&self) {
         let mut g = self.inner.lock().unwrap();
         if !g.closed {
-            let _ = g.conn.stream_send(self.stream_id, &[], true);
+            let _ = g.connection.stream_send(self.stream_identifier, &[], true);
         }
         drop(g);
         self.notify.notify_waiters();
@@ -65,7 +69,7 @@ impl AsyncRead for QuicStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         {
@@ -76,7 +80,7 @@ impl AsyncRead for QuicStream {
             if this.read_eof {
                 return Poll::Ready(Ok(0));
             }
-            match g.conn.stream_recv(this.stream_id, buf) {
+            match g.connection.stream_recv(this.stream_identifier, buffer) {
                 Ok((0, true)) => {
                     this.read_eof = true;
                     drop(g);
@@ -95,18 +99,19 @@ impl AsyncRead for QuicStream {
                 Err(quiche::Error::InvalidStreamState(_)) => {}
                 Err(e) => return Poll::Ready(Err(stream_error(e))),
             }
-            g.read_wakers.insert(this.stream_id, cx.waker().clone());
+            g.read_wakers
+                .insert(this.stream_identifier, cx.waker().clone());
             // Re-check after registration to avoid a lost wakeup.
-            match g.conn.stream_recv(this.stream_id, buf) {
+            match g.connection.stream_recv(this.stream_identifier, buffer) {
                 Ok((0, true)) => {
-                    g.read_wakers.remove(&this.stream_id);
+                    g.read_wakers.remove(&this.stream_identifier);
                     this.read_eof = true;
                     drop(g);
                     this.notify.notify_waiters();
                     return Poll::Ready(Ok(0));
                 }
                 Ok((n, fin)) => {
-                    g.read_wakers.remove(&this.stream_id);
+                    g.read_wakers.remove(&this.stream_identifier);
                     if fin {
                         this.read_eof = true;
                     }
@@ -117,7 +122,7 @@ impl AsyncRead for QuicStream {
                 Err(quiche::Error::Done) => {}
                 Err(quiche::Error::InvalidStreamState(_)) => {}
                 Err(e) => {
-                    g.read_wakers.remove(&this.stream_id);
+                    g.read_wakers.remove(&this.stream_identifier);
                     return Poll::Ready(Err(stream_error(e)));
                 }
             }
@@ -131,7 +136,7 @@ impl AsyncWrite for QuicStream {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &[u8],
+        buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         {
@@ -139,7 +144,10 @@ impl AsyncWrite for QuicStream {
             if g.closed {
                 return Poll::Ready(Err(closed_error()));
             }
-            match g.conn.stream_send(this.stream_id, buf, false) {
+            match g
+                .connection
+                .stream_send(this.stream_identifier, buffer, false)
+            {
                 Ok(n) => {
                     drop(g);
                     this.notify.notify_waiters();
@@ -155,8 +163,11 @@ impl AsyncWrite for QuicStream {
                 Err(e) => return Poll::Ready(Err(stream_error(e))),
             }
             // Register interest in flow-control capacity for this stream.
-            let _ = g.conn.stream_writable(this.stream_id, buf.len());
-            g.write_wakers.insert(this.stream_id, cx.waker().clone());
+            let _ = g
+                .connection
+                .stream_writable(this.stream_identifier, buffer.len());
+            g.write_wakers
+                .insert(this.stream_identifier, cx.waker().clone());
             drop(g);
             Poll::Pending
         }

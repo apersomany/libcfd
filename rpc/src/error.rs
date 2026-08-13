@@ -26,20 +26,20 @@ pub enum RpcError {
 }
 
 impl From<capnp::Error> for RpcError {
-    fn from(err: capnp::Error) -> Self {
-        Self::Protocol(err.to_string())
+    fn from(error: capnp::Error) -> Self {
+        Self::Protocol(error.to_string())
     }
 }
 
 impl From<capnp::NotInSchema> for RpcError {
-    fn from(err: capnp::NotInSchema) -> Self {
-        Self::Protocol(format!("value not in schema: {err:?}"))
+    fn from(error: capnp::NotInSchema) -> Self {
+        Self::Protocol(format!("value not in schema: {error:?}"))
     }
 }
 
 impl From<std::str::Utf8Error> for RpcError {
-    fn from(err: std::str::Utf8Error) -> Self {
-        Self::Protocol(format!("invalid utf-8 in message: {err}"))
+    fn from(error: std::str::Utf8Error) -> Self {
+        Self::Protocol(format!("invalid utf-8 in message: {error}"))
     }
 }
 

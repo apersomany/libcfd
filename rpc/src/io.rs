@@ -37,9 +37,9 @@ pub async fn read_message<S: AsyncStream + Unpin>(
     let mut total_words = 0usize;
     let first = u32::from_le_bytes(header[4..8].try_into().expect("4 bytes")) as usize;
     total_words = total_words.saturating_add(first);
-    if total_words > MAX_TOTAL_WORDS {
+    if total_words > MAXIMUM_TOTAL_WORDS {
         return Err(RpcError::Protocol(format!(
-            "message too large: {total_words} words exceeds limit of {MAX_TOTAL_WORDS}"
+            "message too large: {total_words} words exceeds limit of {MAXIMUM_TOTAL_WORDS}"
         )));
     }
     builder.try_push_segment(first)?;
@@ -49,15 +49,16 @@ pub async fn read_message<S: AsyncStream + Unpin>(
         let mut sizes = vec![0u8; header_size - 8];
         read_exact(stream, &mut sizes).await?;
         for i in 1..segment_count {
-            let off = (i - 1) * 4;
-            let len = u32::from_le_bytes(sizes[off..off + 4].try_into().expect("4 bytes")) as usize;
-            total_words = total_words.saturating_add(len);
-            if total_words > MAX_TOTAL_WORDS {
+            let offset = (i - 1) * 4;
+            let length =
+                u32::from_le_bytes(sizes[offset..offset + 4].try_into().expect("4 bytes")) as usize;
+            total_words = total_words.saturating_add(length);
+            if total_words > MAXIMUM_TOTAL_WORDS {
                 return Err(RpcError::Protocol(format!(
-                    "message too large: {total_words} words exceeds limit of {MAX_TOTAL_WORDS}"
+                    "message too large: {total_words} words exceeds limit of {MAXIMUM_TOTAL_WORDS}"
                 )));
             }
-            builder.try_push_segment(len)?;
+            builder.try_push_segment(length)?;
         }
     }
 
@@ -71,7 +72,7 @@ pub async fn read_message<S: AsyncStream + Unpin>(
 
 /// capnp-go's `defaultDecodeLimit` is 64 MiB; as words (8 bytes each) with
 /// one header word per segment this bounds a single message.
-const MAX_TOTAL_WORDS: usize = 8 * 1024 * 1024;
+const MAXIMUM_TOTAL_WORDS: usize = 8 * 1024 * 1024;
 
 /// Serializes a Cap'n Proto message (including its segment table) to framed
 /// bytes. Synchronous so no non-`Send` capnp builder state is held across an
@@ -89,25 +90,25 @@ pub async fn write_raw<S: AsyncStream + Unpin>(stream: &mut S, bytes: &[u8]) -> 
     Ok(())
 }
 
-async fn read_exact<S: AsyncRead + Unpin>(stream: &mut S, mut buf: &mut [u8]) -> Result<()> {
-    while !buf.is_empty() {
-        let n = poll_fn(|cx| Pin::new(&mut *stream).poll_read(cx, buf)).await?;
+async fn read_exact<S: AsyncRead + Unpin>(stream: &mut S, mut buffer: &mut [u8]) -> Result<()> {
+    while !buffer.is_empty() {
+        let n = poll_fn(|cx| Pin::new(&mut *stream).poll_read(cx, buffer)).await?;
         if n == 0 {
             return Err(RpcError::Eof);
         }
-        let tmp = buf;
-        buf = &mut tmp[n..];
+        let tmp = buffer;
+        buffer = &mut tmp[n..];
     }
     Ok(())
 }
 
-async fn write_all<S: AsyncWrite + Unpin>(stream: &mut S, mut buf: &[u8]) -> Result<()> {
-    while !buf.is_empty() {
-        let n = poll_fn(|cx| Pin::new(&mut *stream).poll_write(cx, buf)).await?;
+async fn write_all<S: AsyncWrite + Unpin>(stream: &mut S, mut buffer: &[u8]) -> Result<()> {
+    while !buffer.is_empty() {
+        let n = poll_fn(|cx| Pin::new(&mut *stream).poll_write(cx, buffer)).await?;
         if n == 0 {
             return Err(RpcError::Protocol("write returned zero bytes".into()));
         }
-        buf = &buf[n..];
+        buffer = &buffer[n..];
     }
     Ok(())
 }

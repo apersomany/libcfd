@@ -18,13 +18,13 @@ const FALLBACK_EDGES: &[&str] = &["region1.v2.argotunnel.com", "region2.v2.argot
 
 /// One resolved edge address.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct EdgeAddr {
-    pub addr: SocketAddr,
+pub(crate) struct EdgeAddress {
+    pub address: SocketAddr,
 }
 
 /// Resolves the edge addresses for a connection, preferring the regional SRV
 /// records used by cloudflared and falling back to well-known hostnames.
-pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddr>> {
+pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddress>> {
     let service = match region {
         Some(r) if !r.is_empty() => format!("{r}-{SRV_SERVICE}"),
         _ => SRV_SERVICE.to_string(),
@@ -34,11 +34,11 @@ pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddr>
         Ok(records) if !records.is_empty() => {
             for (host, port) in records {
                 for ip in resolve_host(&host).await {
-                    let addr = EdgeAddr {
-                        addr: SocketAddr::new(ip, port),
+                    let address = EdgeAddress {
+                        address: SocketAddr::new(ip, port),
                     };
-                    if !edges.contains(&addr) {
-                        edges.push(addr);
+                    if !edges.contains(&address) {
+                        edges.push(address);
                     }
                 }
             }
@@ -47,11 +47,11 @@ pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddr>
             tracing::debug!("SRV lookup unavailable, using fallback edge hostnames");
             for host in FALLBACK_EDGES {
                 for ip in resolve_host(host).await {
-                    let addr = EdgeAddr {
-                        addr: SocketAddr::new(ip, FALLBACK_EDGE_PORT),
+                    let address = EdgeAddress {
+                        address: SocketAddr::new(ip, FALLBACK_EDGE_PORT),
                     };
-                    if !edges.contains(&addr) {
-                        edges.push(addr);
+                    if !edges.contains(&address) {
+                        edges.push(address);
                     }
                 }
             }
@@ -66,8 +66,8 @@ pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddr>
 async fn resolve_host(host: &str) -> Vec<IpAddr> {
     let mut out = Vec::new();
     if let Ok(addrs) = tokio::net::lookup_host((host, FALLBACK_EDGE_PORT)).await {
-        for addr in addrs {
-            let ip = addr.ip();
+        for address in addrs {
+            let ip = address.ip();
             if !out.contains(&ip) {
                 out.push(ip);
             }
@@ -79,11 +79,11 @@ async fn resolve_host(host: &str) -> Vec<IpAddr> {
 /// Returns `(hostname, port)` pairs from the SRV records.
 async fn srv_lookup(service: &str, proto: &str, name: &str) -> io::Result<Vec<(String, u16)>> {
     let resolver = resolver_address().await;
-    for addr in resolver {
-        match query_srv(addr, service, proto, name).await {
+    for address in resolver {
+        match query_srv(address, service, proto, name).await {
             Ok(records) if !records.is_empty() => return Ok(records),
             Ok(_) => continue,
-            Err(e) => tracing::debug!(%addr, "srv query failed: {e}"),
+            Err(e) => tracing::debug!(%address, "srv query failed: {e}"),
         }
     }
     Ok(Vec::new())
@@ -118,9 +118,9 @@ async fn query_srv(
     encode_name(&mut qname, name)?;
     qname.push(0);
 
-    let id: u16 = rand16();
+    let identifier: u16 = random16();
     let mut query = Vec::with_capacity(12 + qname.len() + 4);
-    query.extend_from_slice(&id.to_be_bytes());
+    query.extend_from_slice(&identifier.to_be_bytes());
     query.extend_from_slice(&[0x01, 0x00]); // RD
     query.extend_from_slice(&[0, 1]); // qdcount
     query.extend_from_slice(&[0, 0]); // ancount
@@ -134,136 +134,135 @@ async fn query_srv(
     socket.connect(resolver).await?;
     socket.send(&query).await?;
 
-    let mut buf = vec![0u8; 4096];
-    let timeout = tokio::time::timeout(Duration::from_secs(5), socket.recv(&mut buf))
+    let mut buffer = vec![0u8; 4096];
+    let timeout = tokio::time::timeout(Duration::from_secs(5), socket.recv(&mut buffer))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "dns timeout"))??;
     if timeout == 0 {
         return Ok(Vec::new());
     }
-    parse_srv_response(&buf[..timeout], id)
+    parse_srv_response(&buffer[..timeout], identifier)
 }
 
-fn parse_srv_response(bytes: &[u8], id: u16) -> io::Result<Vec<(String, u16)>> {
+fn parse_srv_response(bytes: &[u8], identifier: u16) -> io::Result<Vec<(String, u16)>> {
     if bytes.len() < 12 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "short dns header",
         ));
     }
-    let resp_id = u16::from_be_bytes([bytes[0], bytes[1]]);
-    if resp_id != id {
+    let response_identifier = u16::from_be_bytes([bytes[0], bytes[1]]);
+    if response_identifier != identifier {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "dns id mismatch",
         ));
     }
-    let ancount = u16::from_be_bytes([bytes[6], bytes[7]]) as usize;
-    let mut pos = 12usize;
+    let answer_count = u16::from_be_bytes([bytes[6], bytes[7]]) as usize;
+    let mut position = 12usize;
     // Skip the question section.
-    pos = skip_name(bytes, pos)?;
-    pos += 4; // qtype + qclass
+    position = skip_name(bytes, position)?;
+    position += 4; // qtype + qclass
 
     let mut records = Vec::new();
-    for _ in 0..ancount {
-        if pos >= bytes.len() {
+    for _ in 0..answer_count {
+        if position >= bytes.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "truncated dns answer",
             ));
         }
-        pos = skip_name(bytes, pos)?;
-        if pos + 10 > bytes.len() {
+        position = skip_name(bytes, position)?;
+        if position + 10 > bytes.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "truncated rr"));
         }
-        let rtype = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
-        let rclass = u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]);
-        let rdlen = u16::from_be_bytes([bytes[pos + 8], bytes[pos + 9]]) as usize;
-        pos += 10;
-        if pos + rdlen > bytes.len() {
+        let rtype = u16::from_be_bytes([bytes[position], bytes[position + 1]]);
+        let rclass = u16::from_be_bytes([bytes[position + 2], bytes[position + 3]]);
+        let rdlen = u16::from_be_bytes([bytes[position + 8], bytes[position + 9]]) as usize;
+        position += 10;
+        if position + rdlen > bytes.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "truncated rdata",
             ));
         }
-        let rdata = &bytes[pos..pos + rdlen];
-        pos += rdlen;
+        let rdata = &bytes[position..position + rdlen];
+        position += rdlen;
         if rclass != 1 {
             continue;
         }
         if rtype == 33 && rdlen >= 6 {
             let port = u16::from_be_bytes([rdata[4], rdata[5]]);
             let mut target = String::new();
-            // The target name is at rdata offset 6; positions are
-            // message-absolute, so resolve relative to the message start.
-            let mut name_pos = pos - rdlen + 6;
-            decode_name(bytes, &mut name_pos, &mut target)?;
+            // The target name starts at rdata offset 6; positions are message-absolute, so resolve relative to the message start.
+            let mut name_position = position - rdlen + 6;
+            decode_name(bytes, &mut name_position, &mut target)?;
             records.push((target, port));
         }
     }
     Ok(records)
 }
 
-fn skip_name(bytes: &[u8], mut pos: usize) -> io::Result<usize> {
+fn skip_name(bytes: &[u8], mut position: usize) -> io::Result<usize> {
     loop {
-        if pos >= bytes.len() {
+        if position >= bytes.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "name overflow"));
         }
-        let len = bytes[pos];
-        if len == 0 {
-            return Ok(pos + 1);
+        let length = bytes[position];
+        if length == 0 {
+            return Ok(position + 1);
         }
-        if len & 0xc0 == 0xc0 {
-            return Ok(pos + 2);
+        if length & 0xc0 == 0xc0 {
+            return Ok(position + 2);
         }
-        if len & 0xc0 != 0 {
+        if length & 0xc0 != 0 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "bad label"));
         }
-        pos += 1 + len as usize;
+        position += 1 + length as usize;
     }
 }
 
 /// Decodes a (possibly compressed) name into a hostname string. `pos` is a
 /// message-absolute position and is advanced past the name when it is not
 /// compressed.
-fn decode_name(bytes: &[u8], pos: &mut usize, out: &mut String) -> io::Result<()> {
-    let mut p = *pos;
+fn decode_name(bytes: &[u8], position: &mut usize, out: &mut String) -> io::Result<()> {
+    let mut p = *position;
     let mut jumped = false;
     loop {
         if p >= bytes.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "name overflow"));
         }
-        let len = bytes[p];
-        if len == 0 {
+        let length = bytes[p];
+        if length == 0 {
             if !jumped {
-                *pos = p + 1;
+                *position = p + 1;
             }
             break;
         }
-        if len & 0xc0 == 0xc0 {
+        if length & 0xc0 == 0xc0 {
             if p + 1 >= bytes.len() {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "bad pointer"));
             }
-            let target = (((len & 0x3f) as usize) << 8) | bytes[p + 1] as usize;
+            let target = (((length & 0x3f) as usize) << 8) | bytes[p + 1] as usize;
             if !jumped {
-                *pos = p + 2;
+                *position = p + 2;
             }
             p = target;
             jumped = true;
             continue;
         }
-        if len & 0xc0 != 0 {
+        if length & 0xc0 != 0 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "bad label"));
         }
-        if p + 1 + len as usize > bytes.len() {
+        if p + 1 + length as usize > bytes.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "label overflow"));
         }
-        let label = &bytes[p + 1..p + 1 + len as usize];
+        let label = &bytes[p + 1..p + 1 + length as usize];
         if !out.is_empty() {
             out.push('.');
         }
         out.push_str(&String::from_utf8_lossy(label));
-        p += 1 + len as usize;
+        p += 1 + length as usize;
     }
     Ok(())
 }
@@ -279,10 +278,10 @@ fn encode_name(out: &mut Vec<u8>, name: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn rand16() -> u16 {
-    let mut buf = [0u8; 2];
-    let _ = getrandom::fill(&mut buf);
-    u16::from_be_bytes(buf)
+fn random16() -> u16 {
+    let mut buffer = [0u8; 2];
+    let _ = getrandom::fill(&mut buffer);
+    u16::from_be_bytes(buffer)
 }
 
 #[cfg(test)]
@@ -308,8 +307,7 @@ mod tests {
 
     #[test]
     fn parses_srv_response() {
-        // A hand-built response: one SRV record for
-        // region1.v2.argotunnel.com port 7844.
+        // A hand-built response: one SRV record for region1.v2.argotunnel.com on port 7844.
         let mut bytes = vec![0x12, 0x34]; // id
         bytes.extend_from_slice(&[0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
         // question: name + SRV + IN

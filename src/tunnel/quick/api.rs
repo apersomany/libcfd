@@ -41,18 +41,18 @@ pub(crate) async fn post_empty(
     let server_name = ServerName::try_from(host.to_string())
         .map_err(|e| Error::quick_tunnel_response(format!("invalid host: {e}")))?;
 
-    let config = rustls::ClientConfig::builder()
+    let configuration = rustls::ClientConfig::builder()
         .with_root_certificates(root_store())
         .with_no_client_auth();
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(configuration));
 
-    let addr = tokio::net::lookup_host((host, port))
+    let address = tokio::net::lookup_host((host, port))
         .await
         .map_err(Error::quick_tunnel_request)?
         .next()
         .ok_or_else(|| Error::quick_tunnel_response(format!("could not resolve {host}:{port}")))?;
 
-    let tcp = tokio::time::timeout(timeout, TcpStream::connect(addr))
+    let tcp = tokio::time::timeout(timeout, TcpStream::connect(address))
         .await
         .map_err(|_| Error::quick_tunnel_api("connection timed out"))?
         .map_err(Error::quick_tunnel_request)?;
@@ -76,13 +76,13 @@ pub(crate) async fn post_empty(
         .map_err(Error::quick_tunnel_request)?;
     stream.flush().await.map_err(Error::quick_tunnel_request)?;
 
-    let mut buf = Vec::new();
-    tokio::time::timeout(timeout, stream.read_to_end(&mut buf))
+    let mut buffer = Vec::new();
+    tokio::time::timeout(timeout, stream.read_to_end(&mut buffer))
         .await
         .map_err(|_| Error::quick_tunnel_api("response timed out"))?
         .map_err(Error::quick_tunnel_request)?;
 
-    let (status, _headers, body) = parse_http_response(&buf)?;
+    let (status, _headers, body) = parse_http_response(&buffer)?;
     Ok((status, body))
 }
 
@@ -129,7 +129,7 @@ fn parse_http_response(bytes: &[u8]) -> Result<HttpResponse> {
 
     let body = &bytes[header_end + 4..];
     let body = match content_length {
-        Some(len) if len <= body.len() => body[..len].to_vec(),
+        Some(length) if length <= body.len() => body[..length].to_vec(),
         _ => body.to_vec(),
     };
     Ok((status, headers, body))

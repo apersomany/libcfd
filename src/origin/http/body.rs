@@ -123,9 +123,9 @@ impl Body {
 
     /// Reads the whole body into memory.
     pub async fn collect(&mut self) -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        io::copy(self, &mut buf).await?;
-        Ok(buf)
+        let mut buffer = Vec::new();
+        io::copy(self, &mut buffer).await?;
+        Ok(buffer)
     }
 }
 
@@ -133,14 +133,14 @@ impl AsyncRead for Body {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        buffer: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
         match &mut self.inner {
             BodyInner::Empty => Poll::Ready(Ok(0)),
             BodyInner::Bytes(cursor) => {
-                futures_util::io::AsyncRead::poll_read(Pin::new(&mut *cursor), cx, buf)
+                futures_util::io::AsyncRead::poll_read(Pin::new(&mut *cursor), cx, buffer)
             }
-            BodyInner::Reader(reader) => reader.as_mut().poll_read(cx, buf),
+            BodyInner::Reader(reader) => reader.as_mut().poll_read(cx, buffer),
         }
     }
 }

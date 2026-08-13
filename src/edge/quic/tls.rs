@@ -21,10 +21,10 @@ pub(crate) fn client_config(ca_cert_pem: Option<&[u8]>) -> Result<quiche::Config
             add_pem_certs(store, &pem)?;
         }
     }
-    let mut config =
+    let mut configuration =
         quiche::Config::with_boring_ssl_ctx_builder(quiche::PROTOCOL_VERSION, builder)?;
-    config.verify_peer(true);
-    Ok(config)
+    configuration.verify_peer(true);
+    Ok(configuration)
 }
 
 fn add_pem_certs(store: &mut boring::x509::store::X509StoreBuilderRef, pem: &[u8]) -> Result<()> {

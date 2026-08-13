@@ -11,7 +11,7 @@ use libcfd_rpc::quic::{
     read_connect_request, write_connect_response,
 };
 
-use crate::edge::config::EdgeConfigHandler;
+use crate::edge::configuration::EdgeConfigurationHandler;
 use crate::edge::quic::{QuicConnection, QuicStream};
 use crate::error::{Error, Result};
 use crate::origin::{Body, Origin, Request, Response, pump};
@@ -25,17 +25,17 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// per-request task. The control stream (id 0) is skipped. Completed
 /// streams are removed from the active set so it stays bounded.
 pub(crate) async fn serve_requests(
-    conn: Arc<QuicConnection>,
+    connection: Arc<QuicConnection>,
     origin: Arc<Origin>,
-    config_handler: Arc<EdgeConfigHandler>,
+    configuration_handler: Arc<EdgeConfigurationHandler>,
 ) -> Result<()> {
     let mut active = HashSet::new();
     active.insert(0);
     let mut tasks = tokio::task::JoinSet::new();
-    let mut rx = conn.subscribe();
+    let mut rx = connection.subscribe();
     loop {
         let new_ids = {
-            let g = conn.inner.lock().unwrap();
+            let g = connection.inner.lock().unwrap();
             if g.closed {
                 return Err(Error::quic(
                     g.close_reason
@@ -43,28 +43,28 @@ pub(crate) async fn serve_requests(
                         .unwrap_or_else(|| "connection closed".into()),
                 ));
             }
-            g.conn
+            g.connection
                 .readable()
-                .filter(|id| active.insert(*id))
+                .filter(|identifier| active.insert(*identifier))
                 .collect::<Vec<_>>()
         };
-        for id in new_ids {
-            let c = conn.clone();
+        for identifier in new_ids {
+            let c = connection.clone();
             let o = origin.clone();
-            let ch = config_handler.clone();
+            let ch = configuration_handler.clone();
             tasks.spawn(async move {
-                let result = serve_stream(c, o.as_ref(), ch.as_ref(), id).await;
-                (id, result)
+                let result = serve_stream(c, o.as_ref(), ch.as_ref(), identifier).await;
+                (identifier, result)
             });
         }
         tokio::select! {
             _ = rx.changed() => {}
             joined = tasks.join_next(), if !tasks.is_empty() => {
                 match joined {
-                    Some(Ok((id, result))) => {
-                        active.remove(&id);
+                    Some(Ok((identifier, result))) => {
+                        active.remove(&identifier);
                         if let Err(e) = result {
-                            tracing::debug!(stream = id, "request stream failed: {e}");
+                            tracing::debug!(stream = identifier, "request stream failed: {e}");
                         }
                     }
                     Some(Err(e)) => {
@@ -78,51 +78,57 @@ pub(crate) async fn serve_requests(
 }
 
 async fn serve_stream(
-    conn: Arc<QuicConnection>,
+    connection: Arc<QuicConnection>,
     origin: &Origin,
-    config_handler: &EdgeConfigHandler,
-    stream_id: u64,
+    configuration_handler: &EdgeConfigurationHandler,
+    stream_identifier: u64,
 ) -> Result<()> {
-    let mut stream = conn.stream(stream_id);
+    let mut stream = connection.stream(stream_identifier);
 
     let mut signature = [0u8; 6];
     stream.read_exact(&mut signature).await?;
     if signature == RPC_STREAM_PROTOCOL_SIGNATURE {
-        return handle_rpc_stream(stream, config_handler).await;
+        return handle_rpc_stream(stream, configuration_handler).await;
     }
     if signature != DATA_STREAM_PROTOCOL_SIGNATURE {
         return Err(Error::quic(format!(
-            "stream {stream_id} has no data-stream signature"
+            "stream {stream_identifier} has no data-stream signature"
         )));
     }
     let mut version = [0u8; 2];
     stream.read_exact(&mut version).await?;
     if version != PROTOCOL_V1 {
         return Err(Error::quic(format!(
-            "stream {stream_id} has unsupported protocol version"
+            "stream {stream_identifier} has unsupported protocol version"
         )));
     }
 
     let connect = read_connect_request(&mut stream).await?;
-    match connect.conn_type {
-        ConnectionType::Http => handle_quic_http(conn, origin, connect, stream_id).await,
-        ConnectionType::Websocket => handle_quic_websocket(conn, origin, connect, stream_id).await,
-        ConnectionType::Tcp => handle_quic_tcp(conn, origin, connect, stream_id).await,
+    match connect.connection_type {
+        ConnectionType::Http => {
+            handle_quic_http(connection, origin, connect, stream_identifier).await
+        }
+        ConnectionType::Websocket => {
+            handle_quic_websocket(connection, origin, connect, stream_identifier).await
+        }
+        ConnectionType::Tcp => {
+            handle_quic_tcp(connection, origin, connect, stream_identifier).await
+        }
     }
 }
 
 async fn handle_quic_http(
-    conn: Arc<QuicConnection>,
+    connection: Arc<QuicConnection>,
     origin: &Origin,
     connect: ConnectRequest,
-    stream_id: u64,
+    stream_identifier: u64,
 ) -> Result<()> {
     let request = build_request(&connect)?;
     let request = Request::new(
         request.method,
         request.uri,
         request.headers,
-        Body::from_reader(conn.stream(stream_id)),
+        Body::from_reader(connection.stream(stream_identifier)),
     );
 
     let response = match origin.http.handle_boxed(request).await {
@@ -133,86 +139,95 @@ async fn handle_quic_http(
         }
     };
 
-    let mut resp_stream = conn.stream(stream_id);
+    let mut response_stream = connection.stream(stream_identifier);
     let metadata = encode_response_metadata(&response);
     let connect_response = ConnectResponse {
         error: String::new(),
         metadata,
     };
-    if let Err(e) = write_response_preamble(&mut resp_stream, &connect_response).await {
-        cancel_write(&conn, stream_id);
+    if let Err(e) = write_response_preamble(&mut response_stream, &connect_response).await {
+        cancel_write(&connection, stream_identifier);
         return Err(e);
     }
 
     let mut body = response.body;
-    let copied = futures_util::io::copy(&mut body, &mut resp_stream).await;
+    let copied = futures_util::io::copy(&mut body, &mut response_stream).await;
     match copied {
         Ok(_) => {}
         Err(e) => {
-            cancel_write(&conn, stream_id);
+            cancel_write(&connection, stream_identifier);
             return Err(Error::edge_io(e));
         }
     }
-    tracing::trace!(stream = stream_id, "response sent");
+    tracing::trace!(stream = stream_identifier, "response sent");
 
-    // Drain any request body bytes the origin did not consume so the edge's
-    // flow-control credit is not held forever.
-    drain_unread(conn.clone(), stream_id);
+    // Drain unconsumed request body bytes so the edge's flow-control credit is not held forever.
+    drain_unread(connection.clone(), stream_identifier);
 
-    resp_stream.finish();
+    response_stream.finish();
     Ok(())
 }
 
 async fn handle_quic_websocket(
-    conn: Arc<QuicConnection>,
+    connection: Arc<QuicConnection>,
     origin: &Origin,
     connect: ConnectRequest,
-    stream_id: u64,
+    stream_identifier: u64,
 ) -> Result<()> {
     let Some(websocket) = &origin.websocket else {
-        return write_stream_error(&conn, stream_id, "no websocket origin handler").await;
+        return write_stream_error(
+            &connection,
+            stream_identifier,
+            "no websocket origin handler",
+        )
+        .await;
     };
     let request = build_request(&connect)?;
-    let connection = match websocket.connect_boxed(request).await {
-        Ok(connection) => connection,
-        Err(e) => return write_stream_error(&conn, stream_id, &format!("{e}")).await,
+    let connection_response = match websocket.connect_boxed(request).await {
+        Ok(connection_response) => connection_response,
+        Err(e) => return write_stream_error(&connection, stream_identifier, &format!("{e}")).await,
     };
 
-    let mut resp_stream = conn.stream(stream_id);
-    let metadata = encode_response_metadata(&connection.response);
+    let mut response_stream = connection.stream(stream_identifier);
+    let metadata = encode_response_metadata(&connection_response.response);
     let connect_response = ConnectResponse {
         error: String::new(),
         metadata,
     };
-    write_response_preamble(&mut resp_stream, &connect_response).await?;
+    write_response_preamble(&mut response_stream, &connect_response).await?;
 
     pump(
-        connection.origin,
-        conn.stream(stream_id),
-        conn.stream(stream_id),
+        connection_response.origin,
+        connection.stream(stream_identifier),
+        connection.stream(stream_identifier),
     )
     .await
 }
 
 async fn handle_quic_tcp(
-    conn: Arc<QuicConnection>,
+    connection: Arc<QuicConnection>,
     origin: &Origin,
     connect: ConnectRequest,
-    stream_id: u64,
+    stream_identifier: u64,
 ) -> Result<()> {
     let Some(tcp) = &origin.tcp else {
-        return write_stream_error(&conn, stream_id, "no tcp origin handler").await;
+        return write_stream_error(&connection, stream_identifier, "no tcp origin handler").await;
     };
-    let request = Request::tcp(&connect.dest);
+    let request = Request::tcp(&connect.destination);
     let duplex = match tcp.connect_boxed(request).await {
         Ok(duplex) => duplex,
-        Err(e) => return write_stream_error(&conn, stream_id, &format!("{e}")).await,
+        Err(e) => return write_stream_error(&connection, stream_identifier, &format!("{e}")).await,
     };
 
-    let mut resp_stream = conn.stream(stream_id);
-    write_response_preamble(&mut resp_stream, &ConnectResponse::default()).await?;
+    let mut response_stream = connection.stream(stream_identifier);
+    write_response_preamble(&mut response_stream, &ConnectResponse::default()).await?;
 
-    pump(duplex, conn.stream(stream_id), conn.stream(stream_id)).await
+    pump(
+        duplex,
+        connection.stream(stream_identifier),
+        connection.stream(stream_identifier),
+    )
+    .await
 }
 
 /// Handles edge-initiated RPC streams: the edge bootstraps the connector's
@@ -221,21 +236,25 @@ async fn handle_quic_tcp(
 /// libcfd answers with an error).
 async fn handle_rpc_stream(
     mut stream: QuicStream,
-    config_handler: &EdgeConfigHandler,
+    configuration_handler: &EdgeConfigurationHandler,
 ) -> Result<()> {
-    libcfd_rpc::serve_cloudflared(&mut stream, config_handler)
+    libcfd_rpc::serve_cloudflared(&mut stream, configuration_handler)
         .await
         .map_err(Error::from)
 }
 
-async fn write_stream_error(conn: &QuicConnection, stream_id: u64, message: &str) -> Result<()> {
-    let mut resp_stream = conn.stream(stream_id);
+async fn write_stream_error(
+    connection: &QuicConnection,
+    stream_identifier: u64,
+    message: &str,
+) -> Result<()> {
+    let mut response_stream = connection.stream(stream_identifier);
     let connect_response = ConnectResponse {
         error: message.to_string(),
         metadata: vec![(HTTP_STATUS_KEY.to_string(), "502".to_string())],
     };
-    write_response_preamble(&mut resp_stream, &connect_response).await?;
-    cancel_write(conn, stream_id);
+    write_response_preamble(&mut response_stream, &connect_response).await?;
+    cancel_write(connection, stream_identifier);
     Ok(())
 }
 
@@ -249,13 +268,13 @@ async fn write_response_preamble(
     Ok(())
 }
 
-fn cancel_write(conn: &QuicConnection, stream_id: u64) {
-    let mut g = conn.inner.lock().unwrap();
+fn cancel_write(connection: &QuicConnection, stream_identifier: u64) {
+    let mut g = connection.inner.lock().unwrap();
     if !g.closed {
         let _ = g
-            .conn
-            .stream_shutdown(stream_id, quiche::Shutdown::Write, 0);
-        if let Some(w) = g.write_wakers.remove(&stream_id) {
+            .connection
+            .stream_shutdown(stream_identifier, quiche::Shutdown::Write, 0);
+        if let Some(w) = g.write_wakers.remove(&stream_identifier) {
             w.wake();
         }
     }
@@ -280,8 +299,12 @@ fn build_request(connect: &ConnectRequest) -> Result<Request> {
             headers.append(n, v);
         }
     }
-    let uri = http::Uri::try_from(connect.dest.as_str())
-        .map_err(|e| Error::quic(format!("invalid request dest {:?}: {e}", connect.dest)))?;
+    let uri = http::Uri::try_from(connect.destination.as_str()).map_err(|e| {
+        Error::quic(format!(
+            "invalid request destination {:?}: {e}",
+            connect.destination
+        ))
+    })?;
     Ok(Request::new(method, uri, headers, Body::empty()))
 }
 
@@ -299,16 +322,16 @@ fn encode_response_metadata(response: &Response) -> Vec<(String, String)> {
     metadata
 }
 
-fn drain_unread(conn: Arc<QuicConnection>, stream_id: u64) {
+fn drain_unread(connection: Arc<QuicConnection>, stream_identifier: u64) {
     tokio::task::spawn(async move {
-        let mut drain = conn.stream(stream_id);
-        let mut buf = [0u8; 8192];
+        let mut drain = connection.stream(stream_identifier);
+        let mut buffer = [0u8; 8192];
         let mut total: u64 = 0;
         let mut read = 0;
         let mut gave_up = false;
         loop {
-            let res = tokio::time::timeout(DRAIN_TIMEOUT, drain.read(&mut buf)).await;
-            match res {
+            let result = tokio::time::timeout(DRAIN_TIMEOUT, drain.read(&mut buffer)).await;
+            match result {
                 Ok(Ok(n)) if n > 0 => {
                     total = total.saturating_add(n as u64);
                     if total >= DRAIN_LIMIT {
@@ -333,13 +356,12 @@ fn drain_unread(conn: Arc<QuicConnection>, stream_id: u64) {
             }
         }
         if gave_up {
-            // Abandoned uploads beyond the drain limit would hold the
-            // connection flow-control window open forever; reset the read
-            // side so the edge stops sending (cloudflared cancels the
-            // stream in the same situation).
-            let mut g = conn.inner.lock().unwrap();
+            // Reset the read side so abandoned uploads beyond the drain limit do not hold the flow-control window open (cloudflared cancels the stream too).
+            let mut g = connection.inner.lock().unwrap();
             if !g.closed {
-                let _ = g.conn.stream_shutdown(stream_id, quiche::Shutdown::Read, 0);
+                let _ = g
+                    .connection
+                    .stream_shutdown(stream_identifier, quiche::Shutdown::Read, 0);
             }
         }
     });
@@ -351,8 +373,8 @@ mod tests {
 
     fn http_request() -> ConnectRequest {
         ConnectRequest {
-            dest: "http://example.com/path".into(),
-            conn_type: ConnectionType::Http,
+            destination: "http://example.com/path".into(),
+            connection_type: ConnectionType::Http,
             metadata: vec![
                 ("HttpMethod".into(), "POST".into()),
                 ("HttpHost".into(), "example.com".into()),
@@ -373,11 +395,11 @@ mod tests {
     #[test]
     fn classifies_tcp_request() {
         let connect = ConnectRequest {
-            dest: "10.0.0.1:8080".into(),
-            conn_type: ConnectionType::Tcp,
+            destination: "10.0.0.1:8080".into(),
+            connection_type: ConnectionType::Tcp,
             metadata: vec![],
         };
-        let request = Request::tcp(&connect.dest);
+        let request = Request::tcp(&connect.destination);
         assert_eq!(request.uri.to_string(), "http://10.0.0.1:8080/");
     }
 

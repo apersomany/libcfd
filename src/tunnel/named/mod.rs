@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-use super::parse_tunnel_id;
+use super::parse_tunnel_identifier;
 
 /// A named tunnel loaded from a credentials file.
 ///
@@ -24,7 +24,7 @@ pub struct NamedTunnel {
     pub tunnel_secret: Vec<u8>,
     /// The tunnel id as a UUID string.
     #[serde(rename = "TunnelID")]
-    pub tunnel_id: String,
+    pub tunnel_identifier: String,
     /// An optional edge region override stored in the credentials.
     #[serde(rename = "Endpoint", default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
@@ -38,7 +38,7 @@ impl NamedTunnel {
         })?;
         let tunnel: NamedTunnel = serde_json::from_slice(&bytes)
             .map_err(|e| Error::named_tunnel_credentials(e.to_string()))?;
-        if tunnel.tunnel_id.is_empty() {
+        if tunnel.tunnel_identifier.is_empty() {
             return Err(Error::named_tunnel_credentials(
                 "credentials file has no TunnelID",
             ));
@@ -71,7 +71,7 @@ impl NamedTunnel {
         let tunnel = NamedTunnel {
             account_tag: payload.account_tag,
             tunnel_secret: secret,
-            tunnel_id: payload.tunnel_id,
+            tunnel_identifier: payload.tunnel_identifier,
             endpoint: payload.endpoint,
         };
         if tunnel.account_tag.is_empty() || tunnel.tunnel_secret.is_empty() {
@@ -79,13 +79,13 @@ impl NamedTunnel {
                 "token payload is missing the account tag or secret",
             ));
         }
-        parse_tunnel_id(&tunnel.tunnel_id)?;
+        parse_tunnel_identifier(&tunnel.tunnel_identifier)?;
         Ok(tunnel)
     }
 
     /// The 16-byte tunnel id.
-    pub fn tunnel_id_bytes(&self) -> Result<[u8; 16]> {
-        parse_tunnel_id(&self.tunnel_id)
+    pub fn tunnel_identifier_bytes(&self) -> Result<[u8; 16]> {
+        parse_tunnel_identifier(&self.tunnel_identifier)
     }
 }
 
@@ -97,7 +97,7 @@ struct TokenPayload {
     #[serde(rename = "s")]
     secret: String,
     #[serde(rename = "t")]
-    tunnel_id: String,
+    tunnel_identifier: String,
     #[serde(rename = "e", default)]
     endpoint: Option<String>,
 }
@@ -111,7 +111,7 @@ mod tests {
         let tunnel = NamedTunnel {
             account_tag: "abc123".into(),
             tunnel_secret: b"top-secret".to_vec(),
-            tunnel_id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            tunnel_identifier: "550e8400-e29b-41d4-a716-446655440000".into(),
             endpoint: None,
         };
         let json = serde_json::to_value(&tunnel).unwrap();
@@ -126,7 +126,10 @@ mod tests {
         let back: NamedTunnel = serde_json::from_value(json).unwrap();
         assert_eq!(back.account_tag, "abc123");
         assert_eq!(back.tunnel_secret, b"top-secret");
-        assert_eq!(back.tunnel_id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(
+            back.tunnel_identifier,
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
     }
 
     #[test]
@@ -136,9 +139,12 @@ mod tests {
         let tunnel = NamedTunnel::from_token(&token).unwrap();
         assert_eq!(tunnel.account_tag, "abc123");
         assert_eq!(tunnel.tunnel_secret, b"top-secret");
-        assert_eq!(tunnel.tunnel_id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(
+            tunnel.tunnel_identifier,
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
         assert_eq!(tunnel.endpoint.as_deref(), Some("us-east-1"));
-        assert_eq!(tunnel.tunnel_id_bytes().unwrap().len(), 16);
+        assert_eq!(tunnel.tunnel_identifier_bytes().unwrap().len(), 16);
     }
 
     #[test]

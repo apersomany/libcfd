@@ -20,10 +20,10 @@ use crate::origin::Origin;
 use crate::tunnel::Tunnel;
 
 use options::select_transport;
-pub use options::{EdgeOptions, Transport, default_config_json};
+pub use options::{EdgeOptions, Transport, default_configuration_json};
 
 use backoff::retry_delay;
-use runtime::{EdgeConnection, EdgeRunParams, ServeAttempt};
+use runtime::{EdgeConnection, EdgeRunParameters, ServeAttempt};
 
 /// Orchestrates edge discovery, connection establishment, retries, and
 /// transport selection for a tunnel.
@@ -71,11 +71,9 @@ impl EdgeConnector {
             let transport = select_transport(
                 self.options.transport,
                 quic_failures,
-                self.options.max_quic_failures,
+                self.options.maximum_quic_failures,
             );
-            // A named tunnel's credentials can carry an `Endpoint` that acts
-            // as the region (cloudflared treats region and endpoint as
-            // interchangeable).
+            // A named tunnel's credentials can carry an Endpoint that acts as the region (cloudflared treats region and endpoint interchangeably).
             let region = self
                 .options
                 .region
@@ -84,8 +82,7 @@ impl EdgeConnector {
             let edges = match discover_edges(region.as_deref()).await {
                 Ok(edges) => edges,
                 Err(e) => {
-                    // Discovery failure is retryable: cloudflared keeps
-                    // retrying rather than aborting the run.
+                    // Discovery failure is retryable: cloudflared keeps retrying rather than aborting the run.
                     tracing::warn!("edge discovery failed, retrying: {e}");
                     attempt = attempt.saturating_add(1);
                     let delay = retry_delay(attempt, self.options.backoff);
@@ -107,7 +104,7 @@ impl EdgeConnector {
                     result = async {
                         let connection = match build_connection(
                             transport,
-                            edge.addr,
+                            edge.address,
                             self.options.ca_cert_pem.as_deref(),
                             self.options.connect_timeout,
                         )
@@ -117,15 +114,18 @@ impl EdgeConnector {
                             Err(e) => return ServeAttempt::failed(e),
                         };
                         connection
-                            .run(EdgeRunParams {
-                                edge: edge.addr,
+                            .run(EdgeRunParameters {
+                                edge: edge.address,
                                 tunnel: tunnel.clone(),
                                 origin: origin.clone(),
                                 shutdown: shutdown_flag.clone(),
-                                config_json: self.options.config_json.clone(),
+                                configuration_json: self.options.configuration_json.clone(),
                                 grace_period: self.options.grace_period,
                                 attempt,
-                                on_remote_config: self.options.on_remote_config.clone(),
+                                on_remote_configuration: self
+                                    .options
+                                    .on_remote_configuration
+                                    .clone(),
                             })
                             .await
                     } => result,
@@ -140,12 +140,12 @@ impl EdgeConnector {
                 match result {
                     Ok(()) => return Ok(()),
                     Err(Error::Edge(EdgeError::DuplicateConnection(_))) => {
-                        tracing::warn!(addr = %edge.addr, "duplicate connection, trying next edge");
+                        tracing::warn!(address = %edge.address, "duplicate connection, trying next edge");
                         continue;
                     }
                     Err(e) if e.is_permanent() => return Err(e),
                     Err(e) => {
-                        tracing::warn!(addr = %edge.addr, ?transport, "edge connection failed: {e}");
+                        tracing::warn!(address = %edge.address, ?transport, "edge connection failed: {e}");
                     }
                 }
                 #[cfg(feature = "quic-edge")]
@@ -162,11 +162,10 @@ impl EdgeConnector {
             #[cfg(feature = "quic-edge")]
             if transport == Transport::Quic {
                 if quic_broken {
-                    // An idle-timeout QUIC failure falls back immediately
-                    // (cloudflared's `isQuicBroken` path).
+                    // An idle-timeout QUIC failure falls back immediately (cloudflared's isQuicBroken path).
                     quic_failures = quic_failures
                         .saturating_add(1)
-                        .max(self.options.max_quic_failures);
+                        .max(self.options.maximum_quic_failures);
                 } else {
                     quic_failures = quic_failures.saturating_add(1);
                 }
@@ -193,21 +192,21 @@ async fn build_connection(
     match transport {
         #[cfg(feature = "quic-edge")]
         Transport::Quic => {
-            let conn =
+            let connection =
                 tokio::time::timeout(connect_timeout, QuicConnection::connect(edge, ca_cert_pem))
                     .await
                     .map_err(|_| Error::quic("edge connection timed out"))??;
-            Ok(Box::new(conn))
+            Ok(Box::new(connection))
         }
         #[cfg(feature = "h2-edge")]
         Transport::H2 => {
-            let (conn, _) = tokio::time::timeout(
+            let (connection, _) = tokio::time::timeout(
                 connect_timeout,
                 H2EdgeConnection::connect(edge, ca_cert_pem),
             )
             .await
             .map_err(|_| Error::h2("edge connection timed out"))??;
-            Ok(Box::new(conn))
+            Ok(Box::new(connection))
         }
         #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
         Transport::Auto => unreachable!("transport selection resolves auto before connecting"),

@@ -6,15 +6,15 @@ use std::time::Duration;
 /// The reconnect delay for a failed attempt.
 pub(crate) fn retry_delay(retries: u32, base: Duration) -> Duration {
     let exponent = retries.min(30);
-    let max_nanos = (base.as_nanos() as u64)
+    let maximum_nanos = (base.as_nanos() as u64)
         .saturating_mul(1u64 << exponent)
         .min(1u64 << 62);
-    if max_nanos == 0 {
+    if maximum_nanos == 0 {
         return Duration::ZERO;
     }
-    let mut buf = [0u8; 8];
-    let _ = getrandom::fill(&mut buf);
-    let nanos = u64::from_le_bytes(buf) % max_nanos;
+    let mut buffer = [0u8; 8];
+    let _ = getrandom::fill(&mut buffer);
+    let nanos = u64::from_le_bytes(buffer) % maximum_nanos;
     Duration::from_nanos(nanos)
 }
 
@@ -27,10 +27,10 @@ mod tests {
         let base = Duration::from_secs(1);
         for retries in 0..10 {
             let delay = retry_delay(retries, base);
-            let max = Duration::from_secs(1).saturating_mul(1 << retries.min(30));
+            let maximum = Duration::from_secs(1).saturating_mul(1 << retries.min(30));
             assert!(
-                delay <= max,
-                "retries={retries} delay={delay:?} max={max:?}"
+                delay <= maximum,
+                "retries={retries} delay={delay:?} maximum={maximum:?}"
             );
         }
     }

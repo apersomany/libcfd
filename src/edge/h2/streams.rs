@@ -16,7 +16,7 @@ use super::H2Shared;
 use super::StreamType;
 use super::classify;
 use super::headers::{INTERNAL_UPGRADE_HEADER, encode_response_headers};
-use super::stream::{RecvStreamReader, SendStreamWriter};
+use super::stream::{ReceiveStreamReader, SendStreamWriter};
 use super::websocket_accept;
 
 pub(crate) async fn handle_stream(
@@ -45,7 +45,7 @@ async fn handle_h2_http(
         parts.method,
         parts.uri,
         headers,
-        Body::from_reader(RecvStreamReader::new(body)),
+        Body::from_reader(ReceiveStreamReader::new(body)),
     );
     let response = match shared.origin.http.handle_boxed(request).await {
         Ok(response) => response,
@@ -76,7 +76,7 @@ async fn handle_h2_websocket(
     let send = write_h2_headers(&mut respond, &connection.response)?;
     pump(
         connection.origin,
-        RecvStreamReader::new(body),
+        ReceiveStreamReader::new(body),
         SendStreamWriter::new(send),
     )
     .await
@@ -116,7 +116,7 @@ async fn handle_h2_tcp(
     let send = write_h2_headers(&mut respond, &ack)?;
     pump(
         duplex,
-        RecvStreamReader::new(body),
+        ReceiveStreamReader::new(body),
         SendStreamWriter::new(send),
     )
     .await
@@ -130,19 +130,21 @@ async fn handle_h2_configuration(
     #[derive(serde::Deserialize)]
     struct ConfigurationUpdateBody {
         version: i32,
-        config: serde_json::Value,
+        #[serde(rename = "config")]
+        configuration: serde_json::Value,
     }
     let (_, body) = request.into_parts();
-    let mut reader = RecvStreamReader::new(body);
+    let mut reader = ReceiveStreamReader::new(body);
     let mut data = Vec::new();
     reader.read_to_end(&mut data).await?;
     let parsed = serde_json::from_slice::<ConfigurationUpdateBody>(&data);
     let response = match parsed {
         Ok(body) => {
-            let config = serde_json::to_vec(&body.config).map_err(|e| Error::h2(e.to_string()))?;
+            let configuration =
+                serde_json::to_vec(&body.configuration).map_err(|e| Error::h2(e.to_string()))?;
             shared
-                .config_handler
-                .update_configuration(body.version, &config)
+                .configuration_handler
+                .update_configuration(body.version, &configuration)
         }
         Err(e) => libcfd_rpc::UpdateConfigurationResponse {
             latest_applied_version: -1,

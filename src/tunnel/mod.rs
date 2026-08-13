@@ -70,18 +70,18 @@ impl Tunnel {
     }
 
     /// The tunnel id as a UUID string.
-    pub fn tunnel_id(&self) -> &str {
+    pub fn tunnel_identifier(&self) -> &str {
         match self {
             #[cfg(feature = "quick-tunnel")]
-            Self::Quick(t) => &t.tunnel_id,
+            Self::Quick(t) => &t.tunnel_identifier,
             #[cfg(feature = "named-tunnel")]
-            Self::Named(t) => &t.tunnel_id,
+            Self::Named(t) => &t.tunnel_identifier,
         }
     }
 
     /// The 16-byte tunnel id.
-    pub fn tunnel_id_bytes(&self) -> Result<[u8; 16]> {
-        parse_tunnel_id(self.tunnel_id())
+    pub fn tunnel_identifier_bytes(&self) -> Result<[u8; 16]> {
+        parse_tunnel_identifier(self.tunnel_identifier())
     }
 
     /// The public hostname of a quick tunnel, when this is one.
@@ -107,9 +107,9 @@ impl Tunnel {
     }
 }
 
-pub(crate) fn parse_tunnel_id(id: &str) -> Result<[u8; 16]> {
-    let uuid = uuid::Uuid::parse_str(id)
-        .map_err(|e| CrateError::invalid_tunnel_id(format!("{id:?}: {e}")))?;
+pub(crate) fn parse_tunnel_identifier(identifier: &str) -> Result<[u8; 16]> {
+    let uuid = uuid::Uuid::parse_str(identifier)
+        .map_err(|e| CrateError::invalid_tunnel_identifier(format!("{identifier:?}: {e}")))?;
     Ok(*uuid.as_bytes())
 }
 
@@ -121,7 +121,7 @@ mod tests {
     #[cfg(feature = "quick-tunnel")]
     fn quick() -> QuickTunnel {
         QuickTunnel {
-            tunnel_id: "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f".into(),
+            tunnel_identifier: "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f".into(),
             name: String::new(),
             hostname: "abc.trycloudflare.com".into(),
             account_tag: "tag".into(),
@@ -137,13 +137,16 @@ mod tests {
         let back: Tunnel = serde_json::from_value(json).unwrap();
         assert_eq!(back.account_tag(), "tag");
         assert_eq!(back.tunnel_secret(), b"secret");
-        assert_eq!(back.tunnel_id(), "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f");
+        assert_eq!(
+            back.tunnel_identifier(),
+            "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f"
+        );
     }
 
     #[cfg(feature = "quick-tunnel")]
     #[test]
-    fn tunnel_id_bytes_parse() {
+    fn tunnel_identifier_bytes_parse() {
         let tunnel = Tunnel::quick(quick());
-        assert_eq!(tunnel.tunnel_id_bytes().unwrap().len(), 16);
+        assert_eq!(tunnel.tunnel_identifier_bytes().unwrap().len(), 16);
     }
 }

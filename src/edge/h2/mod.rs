@@ -19,7 +19,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use tokio::net::TcpStream;
 
-use crate::edge::config::EdgeConfigHandler;
+use crate::edge::configuration::EdgeConfigurationHandler;
 use crate::edge::control::{self, RegistrationOptions};
 use crate::edge::event::Event;
 use crate::error::{Error, Result};
@@ -41,9 +41,9 @@ const EDGE_H2_SNI: &str = "h2.cftunnel.com";
 pub(crate) struct H2Shared {
     pub tunnel: Arc<Tunnel>,
     pub origin: Arc<Origin>,
-    pub reg_opts: Arc<RegistrationOptions>,
-    pub config_json: Arc<Vec<u8>>,
-    pub config_handler: Arc<EdgeConfigHandler>,
+    pub registration_options: Arc<RegistrationOptions>,
+    pub configuration_json: Arc<Vec<u8>>,
+    pub configuration_handler: Arc<EdgeConfigurationHandler>,
     pub shutdown: Arc<Event>,
     pub control_shutdown: Arc<tokio::sync::Notify>,
     /// Fires once registration completes on the control stream.
@@ -53,7 +53,7 @@ pub(crate) struct H2Shared {
 
 /// An HTTP/2 connection to the edge.
 pub(crate) struct H2EdgeConnection {
-    conn: h2::server::Connection<TlsStream, Bytes>,
+    connection: h2::server::Connection<TlsStream, Bytes>,
     /// The local socket IP (4 or 16 bytes), sent as `originLocalIp`.
     pub(crate) local_ip: Vec<u8>,
 }
@@ -65,8 +65,8 @@ impl H2EdgeConnection {
         peer: SocketAddr,
         ca_cert_pem: Option<&[u8]>,
     ) -> Result<(H2EdgeConnection, Vec<u8>)> {
-        let config = tls::tls_client_config(ca_cert_pem)?;
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+        let configuration = tls::tls_client_config(ca_cert_pem)?;
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(configuration));
 
         let tcp = TcpStream::connect(peer).await?;
         let local_ip = control::peer_ip_bytes(&tcp.local_addr()?);
@@ -79,13 +79,13 @@ impl H2EdgeConnection {
 
         let mut builder = h2::server::Builder::new();
         builder.max_concurrent_streams(u32::MAX);
-        let conn = builder
+        let connection = builder
             .handshake(tls)
             .await
             .map_err(|e| Error::h2(format!("http2 handshake failed: {e}")))?;
         Ok((
             H2EdgeConnection {
-                conn,
+                connection,
                 local_ip: local_ip.clone(),
             },
             local_ip,
@@ -99,22 +99,22 @@ impl H2EdgeConnection {
     /// On shutdown the control task unregisters and in-flight streams are
     /// drained, both bounded by the grace period.
     pub(crate) async fn serve(mut self, shared: Arc<H2Shared>) -> Result<()> {
-        let (reg_tx, mut reg_rx) = tokio::sync::oneshot::channel();
-        let mut reg_tx = Some(reg_tx);
+        let (registration_tx, mut registration_rx) = tokio::sync::oneshot::channel();
+        let mut registration_tx = Some(registration_tx);
         let mut control_task: Option<tokio::task::JoinHandle<Result<()>>> = None;
-        let mut reg_done = false;
+        let mut registration_done = false;
         let mut stream_tasks: tokio::task::JoinSet<Result<()>> = tokio::task::JoinSet::new();
         loop {
             tokio::select! {
-                request = self.conn.accept() => {
+                request = self.connection.accept() => {
                     match request {
                         Some(Ok((request, mut respond))) => {
                             if classify(request.headers()) == StreamType::Control {
                                 if control_task.is_none() {
                                     let shared = shared.clone();
-                                    let reg_tx = reg_tx.take().expect("control stream handled once");
+                                    let registration_tx = registration_tx.take().expect("control stream handled once");
                                     control_task = Some(tokio::task::spawn(async move {
-                                        register::handle_control_stream(request, respond, shared, reg_tx).await
+                                        register::handle_control_stream(request, respond, shared, registration_tx).await
                                     }));
                                 } else {
                                     let _ = respond.send_response(
@@ -141,8 +141,8 @@ impl H2EdgeConnection {
                         }
                     }
                 }
-                result = &mut reg_rx, if !reg_done => {
-                    reg_done = true;
+                result = &mut registration_rx, if !registration_done => {
+                    registration_done = true;
                     match result {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => {
@@ -157,7 +157,7 @@ impl H2EdgeConnection {
                         }
                     }
                 }
-                _ = tokio::time::sleep(control::RPC_TIMEOUT), if !reg_done => {
+                _ = tokio::time::sleep(control::RPC_TIMEOUT), if !registration_done => {
                     shared.control_shutdown.notify_waiters();
                     stream_tasks.abort_all();
                     return Err(Error::h2("registration timed out"));
@@ -168,9 +168,7 @@ impl H2EdgeConnection {
                 }
             }
         }
-        // Graceful shutdown: wait for in-flight request streams to drain
-        // (cloudflared waits activeRequestsWG), then for the control task's
-        // unregister RPC, both bounded by the grace period.
+        // Graceful shutdown: drain in-flight request streams (cloudflared's activeRequestsWG), then the control task's unregister RPC, both bounded by the grace period.
         let _ = tokio::time::timeout(shared.grace_period, async {
             while stream_tasks.join_next().await.is_some() {}
         })
