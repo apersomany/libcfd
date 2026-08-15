@@ -38,7 +38,7 @@ fn add_pem_certs(store: &mut boring::x509::store::X509StoreBuilderRef, pem: &[u8
 mod tests {
     #[test]
     fn bundled_cloudflare_roots_parse() {
-        let pem = include_bytes!("cloudflare_origin_ca.pem");
+        let pem = include_bytes!("../cloudflare_origin_ca.pem");
         let certs = boring::x509::X509::stack_from_pem(pem).expect("bundled roots are valid pem");
         assert_eq!(certs.len(), 3);
     }

@@ -7,7 +7,7 @@ use libcfd_rpc::tunnel::{
     ClientInformation, ConnectionOptions, ConnectionResponse, TunnelAuth, TunnelClient,
 };
 
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 use crate::edge::quic::{QuicConnection, QuicStream};
 use crate::error::{Error, Result};
 use crate::tunnel::Tunnel;
@@ -87,7 +87,7 @@ pub(crate) fn peer_ip_bytes(address: &std::net::SocketAddr) -> Vec<u8> {
 ///
 /// Returns the registration details and the still-open client so the caller
 /// can unregister later.
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 pub(crate) async fn register(
     connection: &QuicConnection,
     tunnel: &Tunnel,
@@ -97,7 +97,7 @@ pub(crate) async fn register(
     libcfd_rpc::tunnel::ConnectionDetails,
     TunnelClient<QuicStream>,
 )> {
-    let stream = connection.open_control_stream();
+    let stream = connection.open_control_stream().await?;
     register_on_stream(stream, tunnel, options, configuration_json).await
 }
 

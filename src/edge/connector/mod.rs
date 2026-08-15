@@ -13,7 +13,7 @@ use crate::edge::discover_edges;
 use crate::edge::event::Event;
 #[cfg(feature = "h2-edge")]
 use crate::edge::h2::H2EdgeConnection;
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 use crate::edge::quic::QuicConnection;
 use crate::error::{Error, Result};
 use crate::origin::Origin;
@@ -61,9 +61,9 @@ impl EdgeConnector {
         });
         let tunnel = Arc::new(tunnel);
         let origin = Arc::new(origin);
-        #[cfg(feature = "quic-edge")]
+        #[cfg(quic_any)]
         let mut quic_failures: u8 = 0;
-        #[cfg(not(feature = "quic-edge"))]
+        #[cfg(not(quic_any))]
         let quic_failures: u8 = 0;
         let mut attempt: u32 = 0;
 
@@ -94,9 +94,9 @@ impl EdgeConnector {
                     continue;
                 }
             };
-            #[cfg(feature = "quic-edge")]
+            #[cfg(quic_any)]
             let mut quic_broken = false;
-            #[cfg(not(feature = "quic-edge"))]
+            #[cfg(not(quic_any))]
             let _quic_broken = false;
             for edge in &edges {
                 let attempt_result = tokio::select! {
@@ -135,7 +135,7 @@ impl EdgeConnector {
                     registered_at,
                     quic_timed_out,
                 } = attempt_result;
-                #[cfg(not(feature = "quic-edge"))]
+                #[cfg(not(quic_any))]
                 let _ = quic_timed_out;
                 match result {
                     Ok(()) => return Ok(()),
@@ -148,7 +148,7 @@ impl EdgeConnector {
                         tracing::warn!(address = %edge.address, ?transport, "edge connection failed: {e}");
                     }
                 }
-                #[cfg(feature = "quic-edge")]
+                #[cfg(quic_any)]
                 if quic_timed_out && transport == Transport::Quic {
                     quic_broken = true;
                 }
@@ -159,7 +159,7 @@ impl EdgeConnector {
                     tracing::debug!("reconnect backoff reset after a healthy connection period");
                 }
             }
-            #[cfg(feature = "quic-edge")]
+            #[cfg(quic_any)]
             if transport == Transport::Quic {
                 if quic_broken {
                     // An idle-timeout QUIC failure falls back immediately (cloudflared's isQuicBroken path).
@@ -190,7 +190,7 @@ async fn build_connection(
     connect_timeout: std::time::Duration,
 ) -> Result<Box<dyn EdgeConnection>> {
     match transport {
-        #[cfg(feature = "quic-edge")]
+        #[cfg(quic_any)]
         Transport::Quic => {
             let connection =
                 tokio::time::timeout(connect_timeout, QuicConnection::connect(edge, ca_cert_pem))
@@ -208,7 +208,7 @@ async fn build_connection(
             .map_err(|_| Error::h2("edge connection timed out"))??;
             Ok(Box::new(connection))
         }
-        #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+        #[cfg(all(quic_any, feature = "h2-edge"))]
         Transport::Auto => unreachable!("transport selection resolves auto before connecting"),
     }
 }

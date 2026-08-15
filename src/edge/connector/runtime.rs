@@ -15,9 +15,9 @@ use crate::edge::control::{self, RegistrationOptions};
 use crate::edge::event::Event;
 #[cfg(feature = "h2-edge")]
 use crate::edge::h2::{H2EdgeConnection, H2Shared};
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 use crate::edge::quic::QuicConnection;
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 use crate::edge::serve;
 use crate::error::Error;
 use crate::error::Result;
@@ -49,7 +49,7 @@ impl ServeAttempt {
 /// shut down.
 pub(crate) struct EdgeRunParameters {
     /// The edge address (used as the QUIC `originLocalIp`).
-    #[cfg_attr(not(feature = "quic-edge"), allow(dead_code))]
+    #[cfg_attr(not(quic_any), allow(dead_code))]
     pub edge: SocketAddr,
     pub tunnel: Arc<Tunnel>,
     pub origin: Arc<Origin>,
@@ -75,7 +75,7 @@ pub(crate) trait EdgeConnection: Send {
     ) -> Pin<Box<dyn Future<Output = ServeAttempt> + Send + 'static>>;
 }
 
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 impl EdgeConnection for QuicConnection {
     fn run(
         self: Box<Self>,
@@ -85,7 +85,7 @@ impl EdgeConnection for QuicConnection {
     }
 }
 
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters) -> ServeAttempt {
     let EdgeRunParameters {
         edge,
@@ -143,7 +143,7 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
         // cloudflared waits out the grace period after unregistration so in-flight requests finish before the connection closes.
         tokio::time::sleep(grace_period).await;
     }
-    let quic_timed_out = connection.inner.lock().unwrap().timed_out;
+    let quic_timed_out = connection.timed_out();
     connection.close();
     if !shutdown_fired {
         serve_handle.abort();

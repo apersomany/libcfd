@@ -14,7 +14,7 @@ Current version: 0.2.0. The supported feature set is:
 
 - [x] Quick tunnels (trycloudflare.com HTTP API)
 - [x] Named tunnels (cloudflared credentials file or dashboard connector token; routed hostnames discovered from the edge's remote-configuration push via `EdgeOptions::on_remote_configuration`)
-- [x] QUIC edge transport (quiche)
+- [x] QUIC edge transport (quinn by default; quiche via the `quic-edge-quiche` feature)
 - [x] HTTP/2 edge transport
 - [x] Edge discovery, connection retries, transport selection, and reconnection with exponential backoff
 - [x] Origin handlers: HTTP, WebSocket, TCP, and an axum `Router` adapter
@@ -29,7 +29,7 @@ All features are enabled by default; disable them to slim the dependency tree.
 |---|---|
 | `quick-tunnel` | Quick tunnel API client and `QuickTunnel` type |
 | `named-tunnel` | `NamedTunnel` and the credentials-file loader |
-| `quic-edge` | QUIC edge transport (quiche) |
+| `quic-edge` | QUIC edge transport. Defaults to the quinn backend (pure-Rust rustls/ring); enable `quic-edge-quiche` to use quiche (BoringSSL) instead. The backends are mutually exclusive; quiche wins when both are enabled |
 | `h2-edge` | HTTP/2 edge transport |
 | `axum-origin` | Adapter letting an axum `Router` serve as an HTTP origin |
 

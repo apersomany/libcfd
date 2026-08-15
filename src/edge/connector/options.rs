@@ -9,13 +9,13 @@ use crate::edge::RemoteConfiguration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     /// QUIC only.
-    #[cfg(feature = "quic-edge")]
+    #[cfg(quic_any)]
     Quic,
     /// HTTP/2 only.
     #[cfg(feature = "h2-edge")]
     H2,
     /// Start with QUIC and fall back to HTTP/2 after repeated QUIC failures.
-    #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+    #[cfg(all(quic_any, feature = "h2-edge"))]
     Auto,
 }
 
@@ -85,17 +85,17 @@ impl Default for EdgeOptions {
 
 /// The default transport depends on which edge transports are enabled: auto
 /// when both are, otherwise the only enabled one.
-#[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+#[cfg(all(quic_any, feature = "h2-edge"))]
 fn default_transport() -> Transport {
     Transport::Auto
 }
 
-#[cfg(all(feature = "quic-edge", not(feature = "h2-edge")))]
+#[cfg(all(quic_any, not(feature = "h2-edge")))]
 fn default_transport() -> Transport {
     Transport::Quic
 }
 
-#[cfg(all(not(feature = "quic-edge"), feature = "h2-edge"))]
+#[cfg(all(not(quic_any), feature = "h2-edge"))]
 fn default_transport() -> Transport {
     Transport::H2
 }
@@ -107,7 +107,7 @@ pub fn default_configuration_json() -> &'static str {
 }
 
 /// Applies the transport selection policy after `quic_failures` failures.
-#[cfg(feature = "quic-edge")]
+#[cfg(quic_any)]
 #[cfg_attr(not(feature = "h2-edge"), allow(unused_variables))]
 pub(crate) fn select_transport(
     requested: Transport,
@@ -115,11 +115,11 @@ pub(crate) fn select_transport(
     maximum_quic_failures: u8,
 ) -> Transport {
     match requested {
-        #[cfg(feature = "quic-edge")]
+        #[cfg(quic_any)]
         Transport::Quic => Transport::Quic,
         #[cfg(feature = "h2-edge")]
         Transport::H2 => Transport::H2,
-        #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+        #[cfg(all(quic_any, feature = "h2-edge"))]
         Transport::Auto => {
             if quic_failures >= maximum_quic_failures {
                 Transport::H2
@@ -131,7 +131,7 @@ pub(crate) fn select_transport(
 }
 
 /// Without QUIC there is only the HTTP/2 transport to select.
-#[cfg(not(feature = "quic-edge"))]
+#[cfg(not(quic_any))]
 pub(crate) fn select_transport(
     requested: Transport,
     _quic_failures: u8,
@@ -146,13 +146,13 @@ pub(crate) fn select_transport(
 mod tests {
     use super::*;
 
-    #[cfg(feature = "quic-edge")]
+    #[cfg(quic_any)]
     #[test]
     fn quic_only_transport_never_falls_back() {
         assert_eq!(select_transport(Transport::Quic, 100, 5), Transport::Quic);
     }
 
-    #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+    #[cfg(all(quic_any, feature = "h2-edge"))]
     #[test]
     fn auto_falls_back_after_maximum_failures() {
         assert_eq!(select_transport(Transport::Auto, 0, 5), Transport::Quic);
@@ -167,19 +167,19 @@ mod tests {
         assert_eq!(select_transport(Transport::H2, 0, 5), Transport::H2);
     }
 
-    #[cfg(all(feature = "quic-edge", feature = "h2-edge"))]
+    #[cfg(all(quic_any, feature = "h2-edge"))]
     #[test]
     fn default_transport_is_auto_when_both_edges_enabled() {
         assert_eq!(EdgeOptions::default().transport, Transport::Auto);
     }
 
-    #[cfg(all(feature = "quic-edge", not(feature = "h2-edge")))]
+    #[cfg(all(quic_any, not(feature = "h2-edge")))]
     #[test]
     fn default_transport_is_quic_without_h2() {
         assert_eq!(EdgeOptions::default().transport, Transport::Quic);
     }
 
-    #[cfg(all(not(feature = "quic-edge"), feature = "h2-edge"))]
+    #[cfg(all(not(quic_any), feature = "h2-edge"))]
     #[test]
     fn default_transport_is_h2_without_quic() {
         assert_eq!(EdgeOptions::default().transport, Transport::H2);

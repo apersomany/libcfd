@@ -35,14 +35,14 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-#[cfg(quic_any)]
+#[cfg(feature = "quic-edge-quiche")]
 impl From<boring::error::ErrorStack> for Error {
     fn from(error: boring::error::ErrorStack) -> Self {
         Self::Tls(error.to_string())
     }
 }
 
-#[cfg(quic_any)]
+#[cfg(feature = "quic-edge-quiche")]
 impl From<quiche::Error> for Error {
     fn from(error: quiche::Error) -> Self {
         Self::Quic(error.to_string())

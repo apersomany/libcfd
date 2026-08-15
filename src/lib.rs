@@ -24,7 +24,10 @@
 //! - `quick-tunnel`: the quick tunnel HTTP API client and [`QuickTunnel`]
 //!   type;
 //! - `named-tunnel`: [`NamedTunnel`] and the credentials-file loader;
-//! - `quic-edge`: the QUIC edge transport (quiche);
+//! - `quic-edge`: the QUIC edge transport. Defaults to the quinn backend
+//!   (pure-Rust rustls/ring); enable `quic-edge-quiche` to use quiche
+//!   (BoringSSL) instead — the two backends are mutually exclusive and
+//!   quiche wins when both are enabled;
 //! - `h2-edge`: the HTTP/2 edge transport.
 //!
 //! All four are enabled by default. Transports can be disabled to slim the
@@ -35,7 +38,9 @@
 //!
 //! The QUIC transport implements RFC 9000 (version 1). cloudflared also
 //! offers QUIC version 2; quiche 0.29 does not support it yet, so libcfd
-//! falls back to HTTP/2 if the edge ever stops serving v1.
+//! falls back to HTTP/2 if the edge ever stops serving v1. The quinn backend
+//! needs only a C compiler (`ring`); the quiche backend additionally builds
+//! BoringSSL with cmake and libclang.
 //!
 //! # Runtime notes
 //! - no Tokio types are exposed; callers drive the returned futures on a
@@ -51,7 +56,7 @@
 pub mod edge;
 mod error;
 pub mod origin;
-#[cfg(all(feature = "quick-tunnel", feature = "quic-edge"))]
+#[cfg(all(feature = "quick-tunnel", quic_any))]
 mod run;
 #[cfg(any_tunnel)]
 pub mod tunnel;
@@ -68,7 +73,7 @@ pub use origin::{
     TcpOriginDyn, WebSocketConnection, WebSocketOrigin, WebSocketOriginDyn, WriteHalf,
     websocket_accept,
 };
-#[cfg(all(feature = "quick-tunnel", feature = "quic-edge"))]
+#[cfg(all(feature = "quick-tunnel", quic_any))]
 pub use run::{RunOptions, run_quick_tunnel};
 #[cfg(feature = "named-tunnel")]
 pub use tunnel::NamedTunnel;

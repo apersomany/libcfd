@@ -45,7 +45,7 @@ impl From<libcfd_rpc::RpcError> for Error {
     }
 }
 
-#[cfg(quic_any)]
+#[cfg(feature = "quic-edge-quiche")]
 impl From<boring::error::ErrorStack> for Error {
     fn from(error: boring::error::ErrorStack) -> Self {
         Self::Edge(error.into())
@@ -59,7 +59,7 @@ impl From<h2::Error> for Error {
     }
 }
 
-#[cfg(quic_any)]
+#[cfg(feature = "quic-edge-quiche")]
 impl From<quiche::Error> for Error {
     fn from(error: quiche::Error) -> Self {
         Self::Edge(error.into())

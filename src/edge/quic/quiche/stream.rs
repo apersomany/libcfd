@@ -20,6 +20,7 @@ use tokio::sync::Notify;
 
 use super::Inner;
 
+#[derive(Clone)]
 pub(crate) struct QuicStream {
     inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
@@ -41,6 +42,11 @@ impl QuicStream {
         }
     }
 
+    /// The QUIC stream identifier, for diagnostics.
+    pub(crate) fn id(&self) -> u64 {
+        self.stream_identifier
+    }
+
     /// Sends a FIN for the write side.
     pub(crate) fn finish(&self) {
         let mut g = self.inner.lock().unwrap();
@@ -49,6 +55,29 @@ impl QuicStream {
         }
         drop(g);
         self.notify.notify_waiters();
+    }
+
+    /// Resets the write side (the edge sees a stream reset instead of EOF).
+    pub(crate) fn cancel_write(&self) {
+        let mut g = self.inner.lock().unwrap();
+        if !g.closed {
+            let _ =
+                g.connection
+                    .stream_shutdown(self.stream_identifier, quiche::Shutdown::Write, 0);
+            if let Some(w) = g.write_wakers.remove(&self.stream_identifier) {
+                w.wake();
+            }
+        }
+    }
+
+    /// Stops reading, releasing the flow-control window for abandoned data.
+    pub(crate) fn stop_read(&self) {
+        let mut g = self.inner.lock().unwrap();
+        if !g.closed {
+            let _ = g
+                .connection
+                .stream_shutdown(self.stream_identifier, quiche::Shutdown::Read, 0);
+        }
     }
 }
 
