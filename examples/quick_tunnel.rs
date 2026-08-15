@@ -5,15 +5,15 @@
 //! The tunnel runs until Ctrl-C. The printed hostname is the public URL.
 
 use libcfd::{
-    Body, HttpOrigin, QuickTunnelOptions, Response, RunOptions, create_quick_tunnel,
-    run_quick_tunnel,
+    Body, HttpOrigin, QuickTunnelOptions, Request, Responder, Response, RunOptions,
+    create_quick_tunnel, run_quick_tunnel,
 };
 
 #[derive(Clone)]
 struct HelloOrigin;
 
 impl HttpOrigin for HelloOrigin {
-    async fn handle(&self, request: libcfd::Request) -> Result<libcfd::Response, libcfd::Error> {
+    fn handle(&self, request: Request, respond: Responder) {
         let body = format!(
             "hello from libcfd!\nmethod={}\nuri={}\n",
             request.method, request.uri
@@ -23,11 +23,11 @@ impl HttpOrigin for HelloOrigin {
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("text/plain"),
         );
-        Ok(Response::new(
+        respond.send(Response::new(
             http::StatusCode::OK,
             headers,
             Body::from_bytes(body.into_bytes()),
-        ))
+        ));
     }
 }
 

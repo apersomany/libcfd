@@ -70,7 +70,7 @@ pub async fn run_quick_tunnel<O>(
     options: &RunOptions,
 ) -> Result<()>
 where
-    O: HttpOrigin + Send + Sync + 'static,
+    O: HttpOrigin + 'static,
 {
     let connector = EdgeConnector::new(EdgeOptions::from(options));
     connector

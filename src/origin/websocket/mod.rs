@@ -1,41 +1,20 @@
 //! The [`WebSocketOrigin`] trait consumers implement for websocket upgrades.
 
-use std::future::Future;
-use std::pin::Pin;
-
-use crate::error::Result;
-use crate::origin::duplex::WebSocketConnection;
 use crate::origin::http::body::Request;
+use crate::origin::responder::Responder;
 
 /// Handles websocket upgrades from the edge.
 ///
 /// `connect` runs the origin-side handshake (the consumer owns all origin
-/// I/O) and returns the response the edge should see, plus the origin byte
-/// stream. The transport sends the response and then pumps bytes in both
-/// directions between the edge stream and `origin`.
+/// I/O) and writes the outcome into `respond`: the response headers the
+/// edge should see plus the origin byte stream
+/// ([`accept`](Responder::accept)), or a failure ([`fail`](Responder::fail)).
+/// The transport sends the response and then pumps bytes in both directions
+/// between the edge stream and the origin.
+///
+/// `connect` is synchronous; consumers that need to await origin I/O spawn
+/// a task that calls `accept` or `fail` when the work completes.
 pub trait WebSocketOrigin: Send + Sync {
-    /// Runs the origin-side websocket handshake and returns the response
-    /// headers plus the origin byte stream to pump.
-    fn connect(
-        &self,
-        request: Request,
-    ) -> impl Future<Output = Result<WebSocketConnection>> + Send + '_;
-}
-
-/// Object-safe version of [`WebSocketOrigin`] for boxed/dyn use.
-pub trait WebSocketOriginDyn: Send + Sync {
-    /// Object-safe variant of [`WebSocketOrigin::connect`].
-    fn connect_boxed(
-        &self,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = Result<WebSocketConnection>> + Send + '_>>;
-}
-
-impl<T: WebSocketOrigin> WebSocketOriginDyn for T {
-    fn connect_boxed(
-        &self,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = Result<WebSocketConnection>> + Send + '_>> {
-        Box::pin(self.connect(request))
-    }
+    /// Runs the origin-side websocket handshake and writes the outcome.
+    fn connect(&self, request: Request, respond: Responder);
 }

@@ -13,7 +13,7 @@ use libcfd_rpc::quic::{
 use crate::edge::configuration::EdgeConfigurationHandler;
 use crate::edge::quic::{QuicConnection, QuicStream};
 use crate::error::{Error, Result};
-use crate::origin::{Body, Origin, Request, Response, pump};
+use crate::origin::{Body, Origin, OriginEvent, Request, Responder, Response, pump, wait_event};
 
 const HEADER_KEY_PREFIX: &str = "HttpHeader:";
 /// Max bytes drained from an unread request body after the handler returns.
@@ -117,12 +117,14 @@ async fn handle_quic_http(
         Body::from_reader(stream.clone()),
     );
 
-    let response = match origin.http.handle_boxed(request).await {
-        Ok(response) => response,
-        Err(e) => {
-            tracing::warn!("origin handler failed: {e}");
-            Response::bad_gateway()
+    let (responder, mut events) = Responder::channel();
+    origin.http.handle(request, responder);
+    let response = match wait_event(&mut events).await {
+        Ok(OriginEvent::Response(response)) => response,
+        Ok(_) => {
+            return write_stream_error(&stream, "origin produced an unexpected response").await;
         }
+        Err(message) => return write_stream_error(&stream, &message).await,
     };
 
     let mut response_stream = stream.clone();
@@ -163,20 +165,25 @@ async fn handle_quic_websocket(
         return write_stream_error(&stream, "no websocket origin handler").await;
     };
     let request = build_request(&connect)?;
-    let connection_response = match websocket.connect_boxed(request).await {
-        Ok(connection_response) => connection_response,
-        Err(e) => return write_stream_error(&stream, &format!("{e}")).await,
+    let (responder, mut events) = Responder::channel();
+    websocket.connect(request, responder);
+    let connection = match wait_event(&mut events).await {
+        Ok(OriginEvent::WebSocket(connection)) => connection,
+        Ok(_) => {
+            return write_stream_error(&stream, "origin produced an unexpected response").await;
+        }
+        Err(message) => return write_stream_error(&stream, &message).await,
     };
 
     let mut response_stream = stream.clone();
-    let metadata = encode_response_metadata(&connection_response.response);
+    let metadata = encode_response_metadata(&connection.response);
     let connect_response = ConnectResponse {
         error: String::new(),
         metadata,
     };
     write_response_preamble(&mut response_stream, &connect_response).await?;
 
-    pump(connection_response.origin, stream.clone(), stream.clone()).await
+    pump(connection.origin, stream.clone(), stream.clone()).await
 }
 
 async fn handle_quic_tcp(
@@ -188,9 +195,14 @@ async fn handle_quic_tcp(
         return write_stream_error(&stream, "no tcp origin handler").await;
     };
     let request = Request::tcp(&connect.destination);
-    let duplex = match tcp.connect_boxed(request).await {
-        Ok(duplex) => duplex,
-        Err(e) => return write_stream_error(&stream, &format!("{e}")).await,
+    let (responder, mut events) = Responder::channel();
+    tcp.connect(request, responder);
+    let duplex = match wait_event(&mut events).await {
+        Ok(OriginEvent::Stream(duplex)) => duplex,
+        Ok(_) => {
+            return write_stream_error(&stream, "origin produced an unexpected response").await;
+        }
+        Err(message) => return write_stream_error(&stream, &message).await,
     };
 
     let mut response_stream = stream.clone();

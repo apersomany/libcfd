@@ -9,7 +9,7 @@
 
 use libcfd::{
     Body, Duplex, EdgeConnector, EdgeOptions, HttpOrigin, Origin, QuickTunnelOptions, Request,
-    Response, TcpOrigin, Transport, Tunnel, WebSocketConnection, WebSocketOrigin,
+    Responder, Response, TcpOrigin, Transport, Tunnel, WebSocketConnection, WebSocketOrigin,
     create_quick_tunnel, websocket_accept,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,17 +19,17 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 struct HelloOrigin;
 
 impl HttpOrigin for HelloOrigin {
-    async fn handle(&self, _request: Request) -> Result<Response, libcfd::Error> {
+    fn handle(&self, _request: Request, respond: Responder) {
         let mut headers = http::HeaderMap::new();
         headers.insert(
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("text/plain"),
         );
-        Ok(Response::new(
+        respond.send(Response::new(
             http::StatusCode::OK,
             headers,
             Body::from_bytes(b"hello over http".to_vec()),
-        ))
+        ));
     }
 }
 
@@ -41,26 +41,32 @@ struct EchoWebSocketOrigin {
 }
 
 impl WebSocketOrigin for EchoWebSocketOrigin {
-    async fn connect(&self, request: Request) -> Result<WebSocketConnection, libcfd::Error> {
-        let sock = tokio::net::TcpStream::connect(self.address).await?;
-        let mut headers = http::HeaderMap::new();
-        let key = request
-            .headers
-            .get("sec-websocket-key")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        headers.insert(
-            "Sec-WebSocket-Accept",
-            websocket_accept(key).parse().unwrap(),
-        );
-        Ok(WebSocketConnection {
-            response: Response::new(
-                http::StatusCode::SWITCHING_PROTOCOLS,
-                headers,
-                Body::empty(),
-            ),
-            origin: Duplex::from_stream(sock.compat()),
-        })
+    fn connect(&self, request: Request, respond: Responder) {
+        let address = self.address;
+        tokio::spawn(async move {
+            let sock = match tokio::net::TcpStream::connect(address).await {
+                Ok(sock) => sock,
+                Err(e) => return respond.fail(format!("{e}")),
+            };
+            let mut headers = http::HeaderMap::new();
+            let key = request
+                .headers
+                .get("sec-websocket-key")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            headers.insert(
+                "Sec-WebSocket-Accept",
+                websocket_accept(key).parse().unwrap(),
+            );
+            respond.accept(WebSocketConnection {
+                response: Response::new(
+                    http::StatusCode::SWITCHING_PROTOCOLS,
+                    headers,
+                    Body::empty(),
+                ),
+                origin: Duplex::from_stream(sock.compat()),
+            });
+        });
     }
 }
 
@@ -70,7 +76,7 @@ impl WebSocketOrigin for EchoWebSocketOrigin {
 struct VirtualEchoOrigin;
 
 impl TcpOrigin for VirtualEchoOrigin {
-    async fn connect(&self, _request: Request) -> Result<Duplex, libcfd::Error> {
+    fn connect(&self, _request: Request, respond: Responder) {
         let (mut app_end, libcfd_end) = tokio::io::duplex(64 * 1024);
         tokio::spawn(async move {
             let mut buffer = [0u8; 8192];
@@ -85,7 +91,7 @@ impl TcpOrigin for VirtualEchoOrigin {
                 }
             }
         });
-        Ok(Duplex::from_stream(libcfd_end.compat()))
+        respond.stream(Duplex::from_stream(libcfd_end.compat()));
     }
 }
 

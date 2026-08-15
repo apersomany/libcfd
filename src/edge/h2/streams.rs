@@ -8,7 +8,7 @@ use h2::RecvStream;
 use h2::server::SendResponse;
 
 use crate::error::{Error, Result};
-use crate::origin::{Body, Request, Response, pump};
+use crate::origin::{Body, OriginEvent, Request, Responder, Response, pump, wait_event};
 
 use libcfd_rpc::CloudflaredHandler;
 
@@ -47,12 +47,12 @@ async fn handle_h2_http(
         headers,
         Body::from_reader(ReceiveStreamReader::new(body)),
     );
-    let response = match shared.origin.http.handle_boxed(request).await {
-        Ok(response) => response,
-        Err(e) => {
-            tracing::warn!("origin handler failed: {e}");
-            Response::bad_gateway()
-        }
+    let (responder, mut events) = Responder::channel();
+    shared.origin.http.handle(request, responder);
+    let response = match wait_event(&mut events).await {
+        Ok(OriginEvent::Response(response)) => response,
+        Ok(_) => return write_h2_error(respond, "origin produced an unexpected response").await,
+        Err(message) => return write_h2_error(respond, &message).await,
     };
     write_h2_response(respond, response).await
 }
@@ -69,9 +69,12 @@ async fn handle_h2_websocket(
     let mut headers = parts.headers;
     headers.remove(INTERNAL_UPGRADE_HEADER);
     let request = Request::new(parts.method, parts.uri, headers, Body::empty());
-    let connection = match websocket.connect_boxed(request).await {
-        Ok(connection) => connection,
-        Err(e) => return write_h2_error(respond, &format!("{e}")).await,
+    let (responder, mut events) = Responder::channel();
+    websocket.connect(request, responder);
+    let connection = match wait_event(&mut events).await {
+        Ok(OriginEvent::WebSocket(connection)) => connection,
+        Ok(_) => return write_h2_error(respond, "origin produced an unexpected response").await,
+        Err(message) => return write_h2_error(respond, &message).await,
     };
     let send = write_h2_headers(&mut respond, &connection.response)?;
     pump(
@@ -93,9 +96,12 @@ async fn handle_h2_tcp(
     let (parts, body) = request.into_parts();
     let host = request_host(&parts);
     let request = Request::tcp(&host);
-    let duplex = match tcp.connect_boxed(request).await {
-        Ok(duplex) => duplex,
-        Err(e) => return write_h2_error(respond, &format!("{e}")).await,
+    let (responder, mut events) = Responder::channel();
+    tcp.connect(request, responder);
+    let duplex = match wait_event(&mut events).await {
+        Ok(OriginEvent::Stream(duplex)) => duplex,
+        Ok(_) => return write_h2_error(respond, "origin produced an unexpected response").await,
+        Err(message) => return write_h2_error(respond, &message).await,
     };
     let mut ack_headers = http::HeaderMap::new();
     if let Some(key) = parts.headers.get("sec-websocket-key")

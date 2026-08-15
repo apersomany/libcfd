@@ -63,16 +63,6 @@ impl Response {
             body,
         }
     }
-
-    /// A 502 response, used when the origin handler fails or the request is
-    /// malformed (cloudflared uses the same status for write errors).
-    pub fn bad_gateway() -> Self {
-        Self::new(
-            http::StatusCode::BAD_GATEWAY,
-            http::HeaderMap::new(),
-            Body::empty(),
-        )
-    }
 }
 
 /// A streaming byte body.

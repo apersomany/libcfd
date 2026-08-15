@@ -2,46 +2,28 @@
 
 pub mod body;
 
-use std::future::Future;
-use std::pin::Pin;
-
-use crate::error::Result;
-use crate::origin::http::body::{Request, Response};
+use crate::origin::http::body::Request;
+use crate::origin::responder::Responder;
 
 /// Handles HTTP requests from the edge.
 ///
 /// Implementations must be `Send + Sync` so requests can be handled
-/// concurrently. The returned future is `Send`; wrap with [`HttpOriginDyn`]
-/// when object safety is needed.
+/// concurrently. `handle` is synchronous: the outcome is written into
+/// `respond` and the transport delivers it to the edge. Handlers that need
+/// to await origin I/O (e.g. proxying to an origin server) spawn a task
+/// that calls [`send`](Responder::send) or [`fail`](Responder::fail) when
+/// the work completes.
 pub trait HttpOrigin: Send + Sync {
-    /// Handles one HTTP request from the edge and produces the response.
-    fn handle(&self, request: Request) -> impl Future<Output = Result<Response>> + Send + '_;
+    /// Handles one HTTP request from the edge and writes the response (or
+    /// failure) into `respond`.
+    fn handle(&self, request: Request, respond: Responder);
 }
 
-/// Object-safe version of [`HttpOrigin`] for boxed/dyn use.
-pub trait HttpOriginDyn: Send + Sync {
-    /// Object-safe variant of [`HttpOrigin::handle`].
-    fn handle_boxed(
-        &self,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send + '_>>;
-}
-
-impl<T: HttpOrigin> HttpOriginDyn for T {
-    fn handle_boxed(
-        &self,
-        request: Request,
-    ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send + '_>> {
-        Box::pin(self.handle(request))
-    }
-}
-
-impl<F, Fut> HttpOrigin for F
+impl<F> HttpOrigin for F
 where
-    F: Fn(Request) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<Response>> + Send + 'static,
+    F: Fn(Request, Responder) + Send + Sync + 'static,
 {
-    fn handle(&self, request: Request) -> impl Future<Output = Result<Response>> + Send + '_ {
-        (self)(request)
+    fn handle(&self, request: Request, respond: Responder) {
+        (self)(request, respond)
     }
 }

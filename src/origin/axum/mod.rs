@@ -19,7 +19,7 @@ use futures_util::Stream;
 use futures_util::io::AsyncRead;
 
 use crate::error::{Error, Result};
-use crate::origin::{Body, HttpOrigin, Request, Response};
+use crate::origin::{Body, HttpOrigin, Request, Responder, Response};
 
 /// Serves HTTP requests through an axum [`Router`](axum::Router).
 ///
@@ -43,37 +43,49 @@ impl AxumOrigin {
 }
 
 impl HttpOrigin for AxumOrigin {
-    async fn handle(&self, request: Request) -> Result<Response> {
-        let Request {
-            method,
-            uri,
-            mut headers,
-            body,
-        } = request;
-        if let Some(size) = body.size_hint() {
-            headers.insert(
-                http::header::CONTENT_LENGTH,
-                http::HeaderValue::from_str(&size.to_string())
-                    .map_err(|e| Error::origin_handler(format!("bad content length: {e}")))?,
-            );
-        }
-        let mut axum_request = http::Request::builder()
-            .method(method)
-            .uri(uri)
-            .body(AxumBody::from_stream(BodyReadStream::new(body)))
-            .map_err(|e| Error::origin_handler(format!("failed to build axum request: {e}")))?;
-        *axum_request.headers_mut() = headers;
-
-        let mut service = self.router.clone();
-        // Router::call is infallible; axum converts handler errors into responses.
-        let axum_response = tower::Service::call(&mut service, axum_request)
-            .await
-            .map_err(|e| Error::origin_handler(format!("axum router failed: {e}")))?;
-
-        let (parts, body) = axum_response.into_parts();
-        let body = Body::from_reader(AxumBodyReader::new(body.into_data_stream()));
-        Ok(Response::new(parts.status, parts.headers, body))
+    fn handle(&self, request: Request, respond: Responder) {
+        let router = self.router.clone();
+        tokio::spawn(async move {
+            match serve_router(router, request).await {
+                Ok(response) => respond.send(response),
+                Err(e) => respond.fail(e.to_string()),
+            }
+        });
     }
+}
+
+/// Serves one request through the router and converts the axum response
+/// into a libcfd response. Runs on the spawned task from
+/// [`HttpOrigin::handle`](crate::HttpOrigin::handle).
+async fn serve_router(mut router: axum::Router, request: Request) -> Result<Response> {
+    let Request {
+        method,
+        uri,
+        mut headers,
+        body,
+    } = request;
+    if let Some(size) = body.size_hint() {
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_str(&size.to_string())
+                .map_err(|e| Error::origin_handler(format!("bad content length: {e}")))?,
+        );
+    }
+    let mut axum_request = http::Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(AxumBody::from_stream(BodyReadStream::new(body)))
+        .map_err(|e| Error::origin_handler(format!("failed to build axum request: {e}")))?;
+    *axum_request.headers_mut() = headers;
+
+    // Router::call is infallible; axum converts handler errors into responses.
+    let axum_response = tower::Service::call(&mut router, axum_request)
+        .await
+        .map_err(|e| Error::origin_handler(format!("axum router failed: {e}")))?;
+
+    let (parts, body) = axum_response.into_parts();
+    let body = Body::from_reader(AxumBodyReader::new(body.into_data_stream()));
+    Ok(Response::new(parts.status, parts.headers, body))
 }
 
 /// Streams a libcfd [`Body`] as `Result<Bytes, _>` chunks for axum.
@@ -176,7 +188,17 @@ impl AsyncRead for AxumBodyReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::origin::HttpOrigin;
+    use crate::origin::{OriginEvent, wait_event};
+
+    async fn await_response(origin: &AxumOrigin, request: Request) -> Response {
+        let (respond, mut events) = Responder::channel();
+        origin.handle(request, respond);
+        match wait_event(&mut events).await {
+            Ok(OriginEvent::Response(response)) => response,
+            Ok(_) => panic!("unexpected origin event"),
+            Err(e) => panic!("origin failed: {e}"),
+        }
+    }
 
     #[tokio::test]
     async fn axum_router_serves_through_the_adapter() {
@@ -198,7 +220,7 @@ mod tests {
             http::HeaderMap::new(),
             Body::empty(),
         );
-        let mut response = origin.handle(request).await.unwrap();
+        let mut response = await_response(&origin, request).await;
         assert_eq!(response.status, http::StatusCode::OK);
         assert_eq!(response.body.collect().await.unwrap(), b"hello from axum");
 
@@ -208,7 +230,7 @@ mod tests {
             http::HeaderMap::new(),
             Body::from_bytes(b"payload".to_vec()),
         );
-        let mut response = origin.handle(request).await.unwrap();
+        let mut response = await_response(&origin, request).await;
         assert_eq!(response.status, http::StatusCode::OK);
         assert_eq!(response.body.collect().await.unwrap(), b"echo:payload");
     }
@@ -225,7 +247,7 @@ mod tests {
             http::HeaderMap::new(),
             Body::empty(),
         );
-        let response = origin.handle(request).await.unwrap();
+        let response = await_response(&origin, request).await;
         assert_eq!(response.status, http::StatusCode::NOT_FOUND);
     }
 }

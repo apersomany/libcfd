@@ -38,18 +38,18 @@ struct HelloOrigin {
 }
 
 impl HttpOrigin for HelloOrigin {
-    async fn handle(&self, _request: libcfd::Request) -> Result<libcfd::Response, libcfd::Error> {
+    fn handle(&self, _request: libcfd::Request, respond: libcfd::Responder) {
         self.served.fetch_add(1, Ordering::SeqCst);
         let mut headers = http::HeaderMap::new();
         headers.insert(
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("text/plain"),
         );
-        Ok(Response::new(
+        respond.send(Response::new(
             http::StatusCode::OK,
             headers,
             Body::from_bytes("hello from a named tunnel!".as_bytes().to_vec()),
-        ))
+        ));
     }
 }
 

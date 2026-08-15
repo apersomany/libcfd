@@ -69,9 +69,8 @@ pub use error::Error;
 #[cfg(feature = "axum-origin")]
 pub use origin::axum::AxumOrigin;
 pub use origin::{
-    Body, Duplex, HttpOrigin, HttpOriginDyn, Origin, ReadHalf, Request, Response, TcpOrigin,
-    TcpOriginDyn, WebSocketConnection, WebSocketOrigin, WebSocketOriginDyn, WriteHalf,
-    websocket_accept,
+    Body, Duplex, HttpOrigin, Origin, ReadHalf, Request, Responder, Response, TcpOrigin,
+    WebSocketConnection, WebSocketOrigin, WriteHalf, websocket_accept,
 };
 #[cfg(all(feature = "quick-tunnel", quic_any))]
 pub use run::{RunOptions, run_quick_tunnel};

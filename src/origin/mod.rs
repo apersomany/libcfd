@@ -8,6 +8,7 @@ mod duplex;
 mod error;
 pub use error::Error;
 mod pump;
+mod responder;
 
 #[cfg(feature = "axum-origin")]
 pub mod axum;
@@ -17,12 +18,15 @@ pub mod websocket;
 
 pub use self::http::body::{Body, Request, Response};
 pub use duplex::{Duplex, ReadHalf, WebSocketConnection, WriteHalf};
-pub use http::{HttpOrigin, HttpOriginDyn};
+pub use http::HttpOrigin;
 #[cfg(edge_conn)]
 pub(crate) use pump::pump;
 pub use pump::websocket_accept;
-pub use tcp::{TcpOrigin, TcpOriginDyn};
-pub use websocket::{WebSocketOrigin, WebSocketOriginDyn};
+pub use responder::Responder;
+#[cfg(edge_conn)]
+pub(crate) use responder::{OriginEvent, wait_event};
+pub use tcp::TcpOrigin;
+pub use websocket::WebSocketOrigin;
 
 use std::sync::Arc;
 
@@ -33,16 +37,16 @@ use std::sync::Arc;
 /// [`Origin::with_tcp`].
 #[cfg_attr(not(edge_conn), allow(dead_code))]
 pub struct Origin {
-    pub(crate) http: Arc<dyn HttpOriginDyn>,
-    pub(crate) websocket: Option<Arc<dyn WebSocketOriginDyn>>,
-    pub(crate) tcp: Option<Arc<dyn TcpOriginDyn>>,
+    pub(crate) http: Arc<dyn HttpOrigin>,
+    pub(crate) websocket: Option<Arc<dyn WebSocketOrigin>>,
+    pub(crate) tcp: Option<Arc<dyn TcpOrigin>>,
 }
 
 impl Origin {
     /// Creates an origin with an HTTP handler.
     pub fn http<O>(http: O) -> Self
     where
-        O: HttpOrigin + Send + Sync + 'static,
+        O: HttpOrigin + 'static,
     {
         Self {
             http: Arc::new(http),
@@ -54,7 +58,7 @@ impl Origin {
     /// Adds a websocket handler.
     pub fn with_websocket<O>(mut self, websocket: O) -> Self
     where
-        O: WebSocketOrigin + Send + Sync + 'static,
+        O: WebSocketOrigin + 'static,
     {
         self.websocket = Some(Arc::new(websocket));
         self
@@ -63,7 +67,7 @@ impl Origin {
     /// Adds a raw TCP handler.
     pub fn with_tcp<O>(mut self, tcp: O) -> Self
     where
-        O: TcpOrigin + Send + Sync + 'static,
+        O: TcpOrigin + 'static,
     {
         self.tcp = Some(Arc::new(tcp));
         self
