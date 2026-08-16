@@ -3,14 +3,14 @@
 //! Run with: cargo run --example origin_ws_tcp
 //!
 //! Every websocket stream is echoed through a loopback TCP connection and
-//! every TCP stream through an in-process duplex pair. Both origins hand
-//! the transport a raw duplex; the socket and the virtual origin are built
-//! the same way with `Duplex::from_stream`.
+//! every TCP stream through an in-process stream pair. Both origins hand
+//! the transport a raw stream; the socket and the virtual origin are built
+//! the same way with `Stream::from_io`.
 
 use libcfd::{
-    Body, Duplex, EdgeConnector, EdgeOptions, HttpOrigin, Origin, QuickTunnelOptions, Request,
-    Responder, Response, TcpOrigin, Transport, Tunnel, WebSocketConnection, WebSocketOrigin,
-    create_quick_tunnel, websocket_accept,
+    Body, EdgeConnector, EdgeOptions, HttpOrigin, HttpResponder, Origin, QuickTunnelOptions,
+    Request, Response, Stream, StreamOrigin, TcpResponder, Transport, Tunnel, WebSocketConnection,
+    WebSocketResponder, create_quick_tunnel, websocket_accept,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -19,7 +19,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 struct HelloOrigin;
 
 impl HttpOrigin for HelloOrigin {
-    fn handle(&self, _request: Request, respond: Responder) {
+    fn handle(&self, _request: Request, respond: HttpResponder) {
         let mut headers = http::HeaderMap::new();
         headers.insert(
             http::header::CONTENT_TYPE,
@@ -40,8 +40,8 @@ struct EchoWebSocketOrigin {
     address: std::net::SocketAddr,
 }
 
-impl WebSocketOrigin for EchoWebSocketOrigin {
-    fn connect(&self, request: Request, respond: Responder) {
+impl StreamOrigin<WebSocketResponder> for EchoWebSocketOrigin {
+    fn connect(&self, request: Request, respond: WebSocketResponder) {
         let address = self.address;
         tokio::spawn(async move {
             let sock = match tokio::net::TcpStream::connect(address).await {
@@ -58,25 +58,25 @@ impl WebSocketOrigin for EchoWebSocketOrigin {
                 "Sec-WebSocket-Accept",
                 websocket_accept(key).parse().unwrap(),
             );
-            respond.accept(WebSocketConnection {
+            respond.upgrade(WebSocketConnection {
                 response: Response::new(
                     http::StatusCode::SWITCHING_PROTOCOLS,
                     headers,
                     Body::empty(),
                 ),
-                origin: Duplex::from_stream(sock.compat()),
+                origin: Stream::from_io(sock.compat()),
             });
         });
     }
 }
 
-/// Echoes the raw stream through an in-process duplex pair: a virtual
+/// Echoes the raw stream through an in-process stream pair: a virtual
 /// origin that never touches a socket.
 #[derive(Clone)]
 struct VirtualEchoOrigin;
 
-impl TcpOrigin for VirtualEchoOrigin {
-    fn connect(&self, _request: Request, respond: Responder) {
+impl StreamOrigin<TcpResponder> for VirtualEchoOrigin {
+    fn connect(&self, _request: Request, respond: TcpResponder) {
         let (mut app_end, libcfd_end) = tokio::io::duplex(64 * 1024);
         tokio::spawn(async move {
             let mut buffer = [0u8; 8192];
@@ -91,7 +91,7 @@ impl TcpOrigin for VirtualEchoOrigin {
                 }
             }
         });
-        respond.stream(Duplex::from_stream(libcfd_end.compat()));
+        respond.stream(Stream::from_io(libcfd_end.compat()));
     }
 }
 

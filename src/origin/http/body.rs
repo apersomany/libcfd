@@ -14,7 +14,10 @@ pub struct Request {
     pub uri: http::Uri,
     /// The request headers.
     pub headers: http::HeaderMap,
-    /// The request body.
+    /// The request body, streamed incrementally from the edge as it
+    /// arrives. Nothing is pre-buffered: readers pull bytes as the edge
+    /// sends them, and a handler may respond before the body is fully
+    /// consumed (the transport drains any unread remainder).
     pub body: Body,
 }
 
@@ -29,7 +32,8 @@ impl Request {
         }
     }
 
-    /// Builds the TCP-proxy request the transports hand to a `TcpOrigin`:
+    /// Builds the TCP-proxy request the transports hand to a
+    /// [`StreamOrigin<TcpResponder>`](crate::StreamOrigin):
     /// the destination host rides in the URI (`http://<host>[:port]`).
     #[cfg(edge_conn)]
     pub(crate) fn tcp(host: &str) -> Self {

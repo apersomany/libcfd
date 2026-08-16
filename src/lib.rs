@@ -17,8 +17,7 @@
 //! (quick or [`NamedTunnel`] loaded from a credentials file), an [`Origin`]
 //! with HTTP, websocket and TCP handlers, and a [`Transport`] selection
 //! (QUIC, HTTP/2, or auto with QUIC-to-HTTP/2 fallback). On connection loss
-//! it reconnects with exponential backoff.
-//!
+//! it reconnects with exponential backoff.//!
 //! # Feature gates
 //!
 //! - `quick-tunnel`: the quick tunnel HTTP API client and [`QuickTunnel`]
@@ -69,8 +68,9 @@ pub use error::Error;
 #[cfg(feature = "axum-origin")]
 pub use origin::axum::AxumOrigin;
 pub use origin::{
-    Body, Duplex, HttpOrigin, Origin, ReadHalf, Request, Responder, Response, TcpOrigin,
-    WebSocketConnection, WebSocketOrigin, WriteHalf, websocket_accept,
+    Body, HttpOrigin, HttpResponder, Origin, ReadHalf, Request, Response, Stream, StreamOrigin,
+    StreamResponder, TcpResponder, WebSocketConnection, WebSocketResponder, WriteHalf,
+    websocket_accept,
 };
 #[cfg(all(feature = "quick-tunnel", quic_any))]
 pub use run::{RunOptions, run_quick_tunnel};

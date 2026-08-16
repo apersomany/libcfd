@@ -13,7 +13,10 @@ use libcfd_rpc::quic::{
 use crate::edge::configuration::EdgeConfigurationHandler;
 use crate::edge::quic::{QuicConnection, QuicStream};
 use crate::error::{Error, Result};
-use crate::origin::{Body, Origin, OriginEvent, Request, Responder, Response, pump, wait_event};
+use crate::origin::{
+    Body, HttpResponder, Origin, Request, Response, TcpResponder, WebSocketResponder, pump,
+    wait_outcome,
+};
 
 const HEADER_KEY_PREFIX: &str = "HttpHeader:";
 /// Max bytes drained from an unread request body after the handler returns.
@@ -117,13 +120,10 @@ async fn handle_quic_http(
         Body::from_reader(stream.clone()),
     );
 
-    let (responder, mut events) = Responder::channel();
+    let (responder, receiver) = HttpResponder::channel();
     origin.http.handle(request, responder);
-    let response = match wait_event(&mut events).await {
-        Ok(OriginEvent::Response(response)) => response,
-        Ok(_) => {
-            return write_stream_error(&stream, "origin produced an unexpected response").await;
-        }
+    let response = match wait_outcome(receiver).await {
+        Ok(response) => response,
         Err(message) => return write_stream_error(&stream, &message).await,
     };
 
@@ -165,13 +165,10 @@ async fn handle_quic_websocket(
         return write_stream_error(&stream, "no websocket origin handler").await;
     };
     let request = build_request(&connect)?;
-    let (responder, mut events) = Responder::channel();
+    let (responder, receiver) = WebSocketResponder::channel();
     websocket.connect(request, responder);
-    let connection = match wait_event(&mut events).await {
-        Ok(OriginEvent::WebSocket(connection)) => connection,
-        Ok(_) => {
-            return write_stream_error(&stream, "origin produced an unexpected response").await;
-        }
+    let connection = match wait_outcome(receiver).await {
+        Ok(connection) => connection,
         Err(message) => return write_stream_error(&stream, &message).await,
     };
 
@@ -195,20 +192,17 @@ async fn handle_quic_tcp(
         return write_stream_error(&stream, "no tcp origin handler").await;
     };
     let request = Request::tcp(&connect.destination);
-    let (responder, mut events) = Responder::channel();
+    let (responder, receiver) = TcpResponder::channel();
     tcp.connect(request, responder);
-    let duplex = match wait_event(&mut events).await {
-        Ok(OriginEvent::Stream(duplex)) => duplex,
-        Ok(_) => {
-            return write_stream_error(&stream, "origin produced an unexpected response").await;
-        }
+    let origin_stream = match wait_outcome(receiver).await {
+        Ok(origin_stream) => origin_stream,
         Err(message) => return write_stream_error(&stream, &message).await,
     };
 
     let mut response_stream = stream.clone();
     write_response_preamble(&mut response_stream, &ConnectResponse::default()).await?;
 
-    pump(duplex, stream.clone(), stream.clone()).await
+    pump(origin_stream, stream.clone(), stream.clone()).await
 }
 
 /// Handles edge-initiated RPC streams: the edge bootstraps the connector's

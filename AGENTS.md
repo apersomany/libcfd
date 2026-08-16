@@ -64,7 +64,7 @@ Refine the API after the supported backend behavior and constraints are understo
 ### Origins
 
 - Introduce a shared origin abstraction.
-- Provide `HttpOrigin`, `WebSocketOrigin`, and `TcpOrigin` implementations or adapters.
+- Provide `HttpOrigin` and `StreamOrigin` (websocket and TCP responder variants) implementations or adapters.
 - Explore an `AxumOrigin`, including WebSocket upgrades, only if Hyper and Axum expose the required API safely.
 
 ### Edge connections

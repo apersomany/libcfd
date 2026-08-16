@@ -3,16 +3,16 @@
 use futures_util::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::error::Result;
-use crate::origin::duplex::Duplex;
+use crate::origin::stream::Stream;
 
-/// Pumps bytes in both directions between an origin duplex and the edge
+/// Pumps bytes in both directions between an origin stream and the edge
 /// stream until both directions reach the end.
 ///
 /// Mirrors cloudflared's `PipeBidirectional`: each direction closes only
 /// its own destination write side when the source ends, and the other
 /// direction keeps pumping until it ends as well.
 #[cfg_attr(not(edge_conn), allow(dead_code))]
-pub(crate) async fn pump<R, W>(origin: Duplex, edge_read: R, edge_write: W) -> Result<()>
+pub(crate) async fn pump<R, W>(origin: Stream, edge_read: R, edge_write: W) -> Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -72,7 +72,7 @@ where
 
 /// Computes the RFC 6455 `Sec-WebSocket-Accept` value for a challenge key.
 ///
-/// Consumers implementing [`WebSocketOrigin`](crate::WebSocketOrigin) use
+/// Consumers implementing [`StreamOrigin<WebSocketResponder>`](crate::StreamOrigin) use
 /// this to answer the handshake in their `connect` method.
 #[cfg_attr(not(h2_any), allow(dead_code))]
 pub fn websocket_accept(challenge_key: &str) -> String {

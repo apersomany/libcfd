@@ -8,7 +8,9 @@ use h2::RecvStream;
 use h2::server::SendResponse;
 
 use crate::error::{Error, Result};
-use crate::origin::{Body, OriginEvent, Request, Responder, Response, pump, wait_event};
+use crate::origin::{
+    Body, HttpResponder, Request, Response, TcpResponder, WebSocketResponder, pump, wait_outcome,
+};
 
 use libcfd_rpc::CloudflaredHandler;
 
@@ -47,11 +49,10 @@ async fn handle_h2_http(
         headers,
         Body::from_reader(ReceiveStreamReader::new(body)),
     );
-    let (responder, mut events) = Responder::channel();
+    let (responder, receiver) = HttpResponder::channel();
     shared.origin.http.handle(request, responder);
-    let response = match wait_event(&mut events).await {
-        Ok(OriginEvent::Response(response)) => response,
-        Ok(_) => return write_h2_error(respond, "origin produced an unexpected response").await,
+    let response = match wait_outcome(receiver).await {
+        Ok(response) => response,
         Err(message) => return write_h2_error(respond, &message).await,
     };
     write_h2_response(respond, response).await
@@ -69,11 +70,10 @@ async fn handle_h2_websocket(
     let mut headers = parts.headers;
     headers.remove(INTERNAL_UPGRADE_HEADER);
     let request = Request::new(parts.method, parts.uri, headers, Body::empty());
-    let (responder, mut events) = Responder::channel();
+    let (responder, receiver) = WebSocketResponder::channel();
     websocket.connect(request, responder);
-    let connection = match wait_event(&mut events).await {
-        Ok(OriginEvent::WebSocket(connection)) => connection,
-        Ok(_) => return write_h2_error(respond, "origin produced an unexpected response").await,
+    let connection = match wait_outcome(receiver).await {
+        Ok(connection) => connection,
         Err(message) => return write_h2_error(respond, &message).await,
     };
     let send = write_h2_headers(&mut respond, &connection.response)?;
@@ -96,11 +96,10 @@ async fn handle_h2_tcp(
     let (parts, body) = request.into_parts();
     let host = request_host(&parts);
     let request = Request::tcp(&host);
-    let (responder, mut events) = Responder::channel();
+    let (responder, receiver) = TcpResponder::channel();
     tcp.connect(request, responder);
-    let duplex = match wait_event(&mut events).await {
-        Ok(OriginEvent::Stream(duplex)) => duplex,
-        Ok(_) => return write_h2_error(respond, "origin produced an unexpected response").await,
+    let origin_stream = match wait_outcome(receiver).await {
+        Ok(origin_stream) => origin_stream,
         Err(message) => return write_h2_error(respond, &message).await,
     };
     let mut ack_headers = http::HeaderMap::new();
@@ -121,7 +120,7 @@ async fn handle_h2_tcp(
     );
     let send = write_h2_headers(&mut respond, &ack)?;
     pump(
-        duplex,
+        origin_stream,
         ReceiveStreamReader::new(body),
         SendStreamWriter::new(send),
     )

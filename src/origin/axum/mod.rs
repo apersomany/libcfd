@@ -2,13 +2,13 @@
 //! [`axum::Router`].
 //!
 //! Only the HTTP path is bridged. Axum's websocket support cannot be
-//! adapted to libcfd's [`WebSocketOrigin`](crate::WebSocketOrigin):
+//! adapted to libcfd's [`StreamOrigin<WebSocketResponder>`](crate::StreamOrigin):
 //! `WebSocketUpgrade::on_upgrade` hands the upgraded connection to a closure that axum drives, so the raw
 //! byte stream is never exposed to the caller, and axum's `WebSocket` type
-//! is message-framed rather than a raw duplex. Bridging it would require
+//! is message-framed rather than a raw stream. Bridging it would require
 //! reimplementing RFC 6455 framing on top of the message API. Raw TCP
-//! proxying is likewise outside axum's HTTP-only model, so `TcpOrigin` has
-//! no axum adapter.
+//! proxying is likewise outside axum's HTTP-only model, so
+//! [`StreamOrigin<TcpResponder>`](crate::StreamOrigin) has no axum adapter.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -19,7 +19,7 @@ use futures_util::Stream;
 use futures_util::io::AsyncRead;
 
 use crate::error::{Error, Result};
-use crate::origin::{Body, HttpOrigin, Request, Responder, Response};
+use crate::origin::{Body, HttpOrigin, HttpResponder, Request, Response};
 
 /// Serves HTTP requests through an axum [`Router`](axum::Router).
 ///
@@ -43,7 +43,7 @@ impl AxumOrigin {
 }
 
 impl HttpOrigin for AxumOrigin {
-    fn handle(&self, request: Request, respond: Responder) {
+    fn handle(&self, request: Request, respond: HttpResponder) {
         let router = self.router.clone();
         tokio::spawn(async move {
             match serve_router(router, request).await {
@@ -188,14 +188,13 @@ impl AsyncRead for AxumBodyReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::origin::{OriginEvent, wait_event};
+    use crate::origin::wait_outcome;
 
     async fn await_response(origin: &AxumOrigin, request: Request) -> Response {
-        let (respond, mut events) = Responder::channel();
+        let (respond, receiver) = HttpResponder::channel();
         origin.handle(request, respond);
-        match wait_event(&mut events).await {
-            Ok(OriginEvent::Response(response)) => response,
-            Ok(_) => panic!("unexpected origin event"),
+        match wait_outcome(receiver).await {
+            Ok(response) => response,
             Err(e) => panic!("origin failed: {e}"),
         }
     }

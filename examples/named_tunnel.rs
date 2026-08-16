@@ -38,7 +38,7 @@ struct HelloOrigin {
 }
 
 impl HttpOrigin for HelloOrigin {
-    fn handle(&self, _request: libcfd::Request, respond: libcfd::Responder) {
+    fn handle(&self, _request: libcfd::Request, respond: libcfd::HttpResponder) {
         self.served.fetch_add(1, Ordering::SeqCst);
         let mut headers = http::HeaderMap::new();
         headers.insert(

@@ -5,8 +5,8 @@
 //! The tunnel runs until Ctrl-C. The printed hostname is the public URL.
 //!
 //! Websocket upgrades are not bridged: axum's `WebSocketUpgrade` drives the
-//! upgraded connection inside a callback and never exposes the raw duplex
-//! that libcfd's `WebSocketOrigin` needs, so the adapter is HTTP-only.
+//! upgraded connection inside a callback and never exposes the raw stream
+//! that libcfd's `StreamOrigin<WebSocketResponder>` needs, so the adapter is HTTP-only.
 
 use axum::Router;
 use axum::routing::{get, post};

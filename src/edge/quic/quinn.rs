@@ -166,7 +166,7 @@ fn client_config(ca_cert_pem: Option<&[u8]>) -> Result<quinn::ClientConfig> {
     Ok(config)
 }
 
-/// A duplex handle to a single QUIC stream, shareable across tasks.
+/// A bidirectional handle to a single QUIC stream, shareable across tasks.
 #[derive(Clone)]
 pub(crate) struct QuicStream {
     parts: Arc<Mutex<StreamParts>>,
