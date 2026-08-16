@@ -2,9 +2,6 @@
 
 /target
 
-.envrc
-.direnv
-
 # Orchestration scratch dirs
 .pi-subagents/
 .pi/
