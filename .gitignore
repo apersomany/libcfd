@@ -6,5 +6,5 @@
 .pi-subagents/
 .pi/
 
-# Live-test tunnel credentials (real secrets; never commit)
-.test-creds/
+# Live-test state (real secrets; never commit)
+/tests/state/
