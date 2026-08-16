@@ -1,6 +1,6 @@
 # cloudflared Reference Brief: HTTP/2 Edge Transport, Origin Handlers, Tunnel Credentials, Reconnect
 
-Checkout: `/home/aperso/libcfd/cloudflared` (vendor/ present; Go). No `origin/` package exists — origin handling lives in `connection/`, `ingress/`, `proxy/`. h2mux is gone from this checkout: only a legacy reference (protocol.go:16) and an upgrade shim that maps the `h2mux` flag to HTTP/2 (protocol.go:243-246). `vendor/golang.org/x/net/http2` is the HTTP/2 implementation used for edge connections.
+Checkout: `/home/aperso/libcfd/research/cloudflared` (vendor/ present; Go). No `origin/` package exists — origin handling lives in `connection/`, `ingress/`, `proxy/`. h2mux is gone from this checkout: only a legacy reference (protocol.go:16) and an upgrade shim that maps the `h2mux` flag to HTTP/2 (protocol.go:243-246). `vendor/golang.org/x/net/http2` is the HTTP/2 implementation used for edge connections.
 
 ## 1. HTTP/2 edge connection
 

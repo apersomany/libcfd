@@ -2,7 +2,7 @@
 
 Reviewed: commits `e20291e` (Phase A fix), `af72aa2` (Phase B core), `047fb4a`
 (loopback tests), `030fea4` (examples/cleanup), `1e1aae9`, `4018fcc` (cleanup)
-against the cloudflared checkout at `/home/aperso/libcfd/cloudflared`
+against the cloudflared checkout at `/home/aperso/libcfd/research/cloudflared`
 (connection/http2.go, connection/control.go, connection/connection.go,
 connection/quic_connection.go, supervisor/tunnel.go, supervisor/supervisor.go,
 retry/backoffhandler.go, tunnelrpc/quic/request_*_stream.go,

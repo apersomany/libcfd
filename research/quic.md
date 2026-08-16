@@ -1,6 +1,6 @@
 # QUIC Edge Connection Transport — Technical Brief
 
-Reference checkout: `/home/aperso/libcfd/cloudflared` at commit `61a0b0b3` (2026-08-11).
+Reference checkout: `/home/aperso/libcfd/research/cloudflared` at commit `61a0b0b3` (2026-08-11).
 IMPORTANT LAYOUT NOTE: this checkout is newer than the file names in the task. There is NO `connection/edge.go`, `connection/dial.go`, `connection/control*.go` (except `control.go`), or `connection/request*.go`, and no `quic/request.go`. The QUIC transport logic lives in:
 - `connection/quic.go` (UDP socket + `quic.Dial`)
 - `connection/quic_connection.go` (connection serve loop, stream handling, HTTP request reconstruction)

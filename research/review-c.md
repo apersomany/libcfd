@@ -4,7 +4,7 @@ Reviewed: the 6 Phase C commits `2bb22ec` (start) through `7ebb06f` (HEAD):
 `2bb22ec` phase B review fixes, `cf3d10e` feature gates, `f64d866` typed
 errors, `7a10bf4` origin abstraction + AxumOrigin, `96db7bd` shared
 EdgeConnection, `7ebb06f` docs/examples polish. Ground truth: the
-cloudflared checkout at `/home/aperso/libcfd/cloudflared` (read-only) and
+cloudflared checkout at `/home/aperso/libcfd/research/cloudflared` (read-only) and
 the prior reviews `review-a2.md` / `review-b.md`. `plan.md` and
 `progress.md` do not exist in the repo (as in both prior phases); this
 review is scoped by the commit list.

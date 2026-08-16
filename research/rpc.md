@@ -1,6 +1,6 @@
 # Tunnel Registration RPC Protocol — cloudflared Reference Brief
 
-Research scope: `/home/aperso/libcfd/cloudflared`. Note: there is **no `rpc/` directory** in this checkout; the equivalent code lives in `tunnelrpc/` (client, server, pogs, quic, proto) plus `connection/control.go` (the control-stream glue). The edge-side (`origintunneld`) implementation is NOT in this repo; only the cloudflared (client) side and the shared schema/protocol are available.
+Research scope: `/home/aperso/libcfd/research/cloudflared`. Note: there is **no `rpc/` directory** in this checkout; the equivalent code lives in `tunnelrpc/` (client, server, pogs, quic, proto) plus `connection/control.go` (the control-stream glue). The edge-side (`origintunneld`) implementation is NOT in this repo; only the cloudflared (client) side and the shared schema/protocol are available.
 
 ---
 

@@ -6,13 +6,13 @@ Port the Cloudflare Tunnel behavior needed by library consumers from `cloudflare
 
 # Reference implementation
 
-The `cloudflared/` checkout is the behavioral and protocol reference.
+The `research/cloudflared/` checkout is the behavioral and protocol reference.
 
 - Inspect its source to understand behavior, data formats, state transitions, and protocol details.
 - Compile, run, instrument, and test it when static analysis is insufficient.
 - Do not copy its files or substantial source into this workspace. Implement the behavior independently in Rust.
 - Conventional build-integration boilerplate, such as a `capnpc` build script, may be adapted from authoritative documentation or examples. Preserve attribution and licensing when required.
-- Treat `cloudflared/` as read-only unless the task explicitly asks to modify it.
+- Treat `research/cloudflared/` as read-only unless the task explicitly asks to modify it.
 
 # Roadmap
 

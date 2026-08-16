@@ -1,6 +1,6 @@
 # Cloudflared Reference Research Briefs
 
-Collected research from four scout runs against the `cloudflared/` reference checkout (commit `61a0b0b3`, 2026-08-11) at `/home/aperso/libcfd/cloudflared`. Source: async subagent workflow run `6d821c8c-a64c-4996-924c-f9a7dd58e5b4` (scout run ids: `ae969f7b` quic, `b0092078` quicktunnel, `f5347342` rpc, `b9985400` h2origins).
+Collected research from four scout runs against the `research/cloudflared/` reference checkout (commit `61a0b0b3`, 2026-08-11) at `/home/aperso/libcfd/research/cloudflared`. Source: async subagent workflow run `6d821c8c-a64c-4996-924c-f9a7dd58e5b4` (scout run ids: `ae969f7b` quic, `b0092078` quicktunnel, `f5347342` rpc, `b9985400` h2origins).
 
 | File | Topic |
 |---|---|

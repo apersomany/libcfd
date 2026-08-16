@@ -1,6 +1,6 @@
 # Cloudflare Tunnel Edge Protocol Digest
 
-Condensed from `docs/research/{quic,quicktunnel,rpc,h2origins}.md`, all over the same
+Condensed from `{quic,quicktunnel,rpc,h2origins}.md`, all over the same
 `cloudflared/` checkout @ commit `61a0b0b3` (tag `2026.7.3-3-g61a0b0b3`). Purpose: sequence the
 libcfd implementation and serve as the fact base for worker briefs and review checklists.
 Everything below is an exact constant, byte sequence, field name, or behavior from the checkout

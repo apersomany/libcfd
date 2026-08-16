@@ -1,6 +1,6 @@
 # Technical brief: Quick Tunnel creation and edge discovery in cloudflared
 
-Reference checkout: `/home/aperso/libcfd/cloudflared` @ `61a0b0b3` (tag `2026.7.3-3-g61a0b0b3`, i.e. a 2026-era release).
+Reference checkout: `/home/aperso/libcfd/research/cloudflared` @ `61a0b0b3` (tag `2026.7.3-3-g61a0b0b3`, i.e. a 2026-era release).
 
 Scope note: this checkout has NO `cmd/cloudflared/tunnel/run.go` and NO use of `/cdn-cgi/trace`. The quick tunnel path is `TunnelCommand` -> `RunQuickTunnel` (in `cmd/cloudflared/tunnel/quick_tunnel.go`), and edge discovery is DNS SRV based only. Anything the task asked about that referenced older behavior is documented as "not present in this checkout".
 
