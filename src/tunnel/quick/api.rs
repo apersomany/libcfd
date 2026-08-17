@@ -159,4 +159,22 @@ mod tests {
         assert_eq!(status, 500);
         assert_eq!(body, b"boom");
     }
+
+    #[test]
+    fn rejects_truncated_http_response() {
+        // No header terminator at all.
+        assert!(parse_http_response(b"HTTP/1.1 200 OK\r\nX: y").is_err());
+        assert!(parse_http_response(b"").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_status_line() {
+        assert!(parse_http_response(b"garbage\r\n\r\n").is_err());
+        assert!(parse_http_response(b"HTTP/1.1 OK\r\n\r\n").is_err());
+    }
+
+    #[test]
+    fn rejects_non_utf8_headers() {
+        assert!(parse_http_response(b"HTTP/1.1 200 OK\r\nX: \xff\xfe\r\n\r\n").is_err());
+    }
 }

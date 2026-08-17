@@ -95,12 +95,18 @@ pub async fn write_connect_response<S: AsyncStream + Unpin>(
 }
 
 /// Encodes a `ConnectResponse` into a Cap'n Proto message.
+///
+/// Matches cloudflared's `ConnectResponse.ToPogs`: the error field stays a
+/// null pointer when empty (capnp-go leaves it unset), keeping the wire
+/// bytes identical to the reference implementation.
 pub fn encode_connect_response(
     response: &ConnectResponse,
 ) -> Result<capnp::message::Builder<capnp::message::HeapAllocator>> {
     let mut message = capnp::message::Builder::new_default();
     let mut root = message.init_root::<mpc::connect_response::Builder>();
-    root.set_error(&response.error);
+    if !response.error.is_empty() {
+        root.set_error(&response.error);
+    }
     let mut md = root
         .reborrow()
         .init_metadata(response.metadata.len() as u32);

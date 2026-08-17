@@ -13,7 +13,7 @@ The `research/cloudflared/` checkout is the behavioral and protocol reference. T
 - Use `tracing` for diagnostics; never initialize a global subscriber. Never log credentials, tunnel tokens, private keys, or request authorization data.
 - Implement only the smallest surface needed for the task.
 - Prefer safe Rust. If unsafe is unavoidable, isolate it and explain the invariant in a single concise comment.
-- Use `anyhow` internally; expose typed `thiserror` errors at public boundaries.
+- Use `thiserror` errors.
 - Keep tests focused and minimal; test observable behavior, not implementation details.
 - Use the Cargo CLI for dependency changes. Prefer the latest compatible release; minimize dependencies and features; remove unused ones before finishing a task.
 - Do not modify generated files when the schema or generation step can be changed instead.

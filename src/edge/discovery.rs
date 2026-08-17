@@ -343,4 +343,34 @@ mod tests {
         assert_eq!(records[0].0, "region1.v2.argotunnel.com");
         assert_eq!(records[0].1, 7844);
     }
+
+    #[test]
+    fn rejects_truncated_dns_messages() {
+        // Shorter than the 12-byte header.
+        assert!(parse_srv_response(&[0x12], 0x1234).is_err());
+        // Header but no question section.
+        assert!(
+            parse_srv_response(&[0x12, 0x34, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0], 0x1234).is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_dns_identifier() {
+        let bytes = [0x00, 0x01, 0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0];
+        assert!(parse_srv_response(&bytes, 0x1234).is_err());
+    }
+
+    #[test]
+    fn rejects_bad_name_labels() {
+        // A label with the 0x40 extension bits set is malformed.
+        let bytes = [0x12, 0x34, 0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0, 0x40, b'x'];
+        assert!(parse_srv_response(&bytes, 0x1234).is_err());
+    }
+
+    #[test]
+    fn rejects_overflowing_name_length() {
+        // A label length that runs past the end of the message.
+        let bytes = [0x12, 0x34, 0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0, 0x20, b'x'];
+        assert!(parse_srv_response(&bytes, 0x1234).is_err());
+    }
 }

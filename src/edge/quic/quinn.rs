@@ -27,7 +27,8 @@ const MAXIMUM_IDLE_TIMEOUT_MS: u32 = 5_000;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 const STREAM_RECEIVE_WINDOW: u64 = 6 * 1024 * 1024;
 const CONNECTION_RECEIVE_WINDOW: u64 = 30 * 1024 * 1024;
-const MAXIMUM_INCOMING_STREAMS: u64 = 1 << 60;
+// Quinn allocates state for the entire advertised receive window.
+const MAXIMUM_INCOMING_STREAMS: u64 = 1024;
 
 /// A QUIC connection to the edge.
 pub(crate) struct QuicConnection {

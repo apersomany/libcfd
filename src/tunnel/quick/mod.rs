@@ -119,8 +119,13 @@ pub async fn create_quick_tunnel(options: &QuickTunnelOptions) -> Result<QuickTu
             "service returned status {status}: {message}"
         )));
     }
+    parse_response(&body)
+}
+
+/// Validates and decodes a quick tunnel API response body.
+pub(crate) fn parse_response(body: &[u8]) -> Result<QuickTunnel> {
     let data: QuickTunnelResponse =
-        serde_json::from_slice(&body).map_err(|e| Error::quick_tunnel_response(e.to_string()))?;
+        serde_json::from_slice(body).map_err(|e| Error::quick_tunnel_response(e.to_string()))?;
     if !data.success {
         let message = data
             .errors
@@ -190,5 +195,39 @@ mod tests {
         let data: QuickTunnelResponse = serde_json::from_slice(body).unwrap();
         assert!(!data.success);
         assert_eq!(data.errors[0].message, "nope");
+    }
+
+    #[test]
+    fn rejects_malformed_api_response() {
+        assert!(parse_response(b"not json").is_err());
+        assert!(parse_response(b"").is_err());
+        assert!(parse_response(b"{\"success\": true").is_err());
+    }
+
+    #[test]
+    fn rejects_api_response_missing_result() {
+        assert!(parse_response(br#"{"success":true}"#).is_err());
+        assert!(parse_response(br#"{"success":true,"result":null}"#).is_err());
+    }
+
+    #[test]
+    fn rejects_api_response_missing_id_or_hostname() {
+        let body =
+            br#"{"success":true,"result":{"name":"","account_tag":"a","secret":"c2VjcmV0"}}"#;
+        let error = parse_response(body).unwrap_err();
+        assert!(error.to_string().contains("id or hostname"), "{error}");
+    }
+
+    #[test]
+    fn rejects_api_error_payload() {
+        let body = br#"{"success":false,"errors":[{"code":10000,"message":"nope"}]}"#;
+        let error = parse_response(body).unwrap_err();
+        assert!(error.to_string().contains("10000: nope"), "{error}");
+    }
+
+    #[test]
+    fn rejects_quick_tunnel_with_invalid_secret_base64() {
+        let body = br#"{"tunnel_id":"6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f","name":"","hostname":"x.trycloudflare.com","account_tag":"a","secret":"not!base64"}"#;
+        assert!(serde_json::from_slice::<QuickTunnel>(body).is_err());
     }
 }

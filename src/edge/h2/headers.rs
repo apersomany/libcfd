@@ -141,6 +141,24 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_skips_malformed_pairs() {
+        // Invalid base64 on either side is skipped, as is a pair without a
+        // colon.
+        assert_eq!(
+            deserialize_headers("!!!:???"),
+            Vec::<(String, String)>::new()
+        );
+        assert_eq!(
+            deserialize_headers("no-colon-here"),
+            Vec::<(String, String)>::new()
+        );
+        assert_eq!(
+            deserialize_headers("Q29udGVudC1UeXBl:dGV4dC9wbGFpbg;!!!:???"),
+            vec![("Content-Type".to_string(), "text/plain".to_string())]
+        );
+    }
+
+    #[test]
     fn response_headers_apply_cloudflared_rules() {
         let mut origin_headers = http::HeaderMap::new();
         origin_headers.insert("content-length", "5".parse().unwrap());

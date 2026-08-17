@@ -168,4 +168,30 @@ mod tests {
         let token = base64::engine::general_purpose::STANDARD.encode(payload);
         assert!(NamedTunnel::from_token(&token).is_err());
     }
+
+    #[test]
+    fn credentials_file_loader_rejects_missing_file() {
+        let path = std::env::temp_dir().join("libcfd-test-named-missing-credentials.json");
+        assert!(NamedTunnel::from_credentials_file(&path).is_err());
+    }
+
+    #[test]
+    fn credentials_file_loader_rejects_malformed_files() {
+        let path = std::env::temp_dir().join("libcfd-test-named-malformed-credentials.json");
+        let cases: &[&[u8]] = &[
+            b"not json",
+            // Invalid secret base64.
+            br#"{"AccountTag":"a","TunnelSecret":"!!","TunnelID":"550e8400-e29b-41d4-a716-446655440000"}"#,
+            // Empty tunnel id.
+            br#"{"AccountTag":"a","TunnelSecret":"dG9wLXNlY3JldA==","TunnelID":""}"#,
+        ];
+        for case in cases {
+            std::fs::write(&path, case).unwrap();
+            assert!(
+                NamedTunnel::from_credentials_file(&path).is_err(),
+                "case {case:?}"
+            );
+        }
+        std::fs::remove_file(&path).ok();
+    }
 }

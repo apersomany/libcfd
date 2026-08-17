@@ -132,3 +132,60 @@ pub(crate) async fn wait_outcome<T>(
         Err(_) => Err("origin handler produced no response".to_string()),
     }
 }
+
+#[cfg(all(test, edge_conn))]
+mod tests {
+    use super::*;
+    use crate::origin::http::body::Response;
+
+    #[tokio::test]
+    async fn dropped_http_responder_surfaces_no_response_error() {
+        let (responder, receiver) = HttpResponder::channel();
+        drop(responder);
+        assert_eq!(
+            wait_outcome(receiver).await.unwrap_err(),
+            "origin handler produced no response"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_http_responder_surfaces_handler_message() {
+        let (responder, receiver) = HttpResponder::channel();
+        responder.fail("origin down");
+        assert_eq!(wait_outcome(receiver).await.unwrap_err(), "origin down");
+    }
+
+    #[tokio::test]
+    async fn dropped_websocket_responder_surfaces_no_response_error() {
+        let (responder, receiver) = WebSocketResponder::channel();
+        drop(responder);
+        let outcome = wait_outcome(receiver).await;
+        match outcome {
+            Err(message) => assert_eq!(message, "origin handler produced no response"),
+            Ok(_) => panic!("expected a dropped-responder error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dropped_tcp_responder_surfaces_no_response_error() {
+        let (responder, receiver) = TcpResponder::channel();
+        drop(responder);
+        let outcome = wait_outcome(receiver).await;
+        match outcome {
+            Err(message) => assert_eq!(message, "origin handler produced no response"),
+            Ok(_) => panic!("expected a dropped-responder error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn response_surfaces_through_http_responder() {
+        let (responder, receiver) = HttpResponder::channel();
+        responder.send(Response::new(
+            http::StatusCode::OK,
+            http::HeaderMap::new(),
+            crate::origin::http::body::Body::empty(),
+        ));
+        let response = wait_outcome(receiver).await.unwrap();
+        assert_eq!(response.status, http::StatusCode::OK);
+    }
+}

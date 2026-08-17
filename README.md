@@ -2,8 +2,6 @@
 
 A port of [cloudflared](https://github.com/cloudflare/cloudflared) (the Cloudflare Tunnel client) to Rust, as a **library**.
 
-> **Development note:** this codebase was mostly experimentally driven by DeepSeek V4 Flash 0731 working from the repository's `AGENTS.md` brief, with minimal user input. As part of the 0.2 rework, the previous test suites were intentionally removed so they can be replaced with better ones; expect the test surface to grow again.
-
 # Purpose
 
 LibCFD intends to be a lightweight, programmable replacement for cloudflared and its command-line wrappers. The main advantage of LibCFD is that a consumer application does not have to spawn a whole new process (with a garbage-collected runtime) to connect to Cloudflare, avoiding the IPC and GC overheads of an out-of-process tunnel client.
@@ -83,5 +81,22 @@ cargo run --example axum_tunnel --features axum-origin
 - `tracing` is used for diagnostics; the library never installs a global subscriber.
 
 # Documentation
+
+## Testing
+
+`cargo test` runs the offline suite: unit tests, RPC wire/exchange tests,
+and external-consumer API tests (including compile-time `Send` checks on
+public futures). No network access or credentials are needed.
+
+Live-edge tests are `#[ignore]`d and run via:
+
+```text
+scripts/live-test.sh        # quick + named tunnels against the real edge
+scripts/feature-matrix.sh   # compile/test every feature combination
+scripts/check-secrets.sh    # verify credential hygiene in CI
+```
+
+See [`tests/README.md`](tests/README.md) for the full suite documentation
+and the feature requirements of each live test.
 
 The crate-level docs (`cargo doc --open`) describe the entry points (`create_quick_tunnel`, `run_quick_tunnel`, `EdgeConnector`) and the QUIC v1 / HTTP/2 edge protocol details. `research/` collects protocol research briefs gathered from the `research/cloudflared/` reference checkout.

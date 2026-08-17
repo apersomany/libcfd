@@ -100,6 +100,12 @@ async fn serve_stream(
     }
 
     let connect = read_connect_request(&mut stream).await?;
+    tracing::trace!(
+        stream = stream.id(),
+        connection_type = ?connect.connection_type,
+        destination = %connect.destination,
+        "edge requested a connection"
+    );
     match connect.connection_type {
         ConnectionType::Http => handle_quic_http(origin, connect, stream).await,
         ConnectionType::Websocket => handle_quic_websocket(origin, connect, stream).await,

@@ -115,7 +115,6 @@ pub(crate) fn parse_tunnel_identifier(identifier: &str) -> Result<[u8; 16]> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "quick-tunnel")]
     use super::*;
 
     #[cfg(feature = "quick-tunnel")]
@@ -131,15 +130,19 @@ mod tests {
 
     #[cfg(feature = "quick-tunnel")]
     #[test]
-    fn tunnel_enum_round_trip() {
+    fn tunnel_quick_serializes_to_expected_shape() {
         let tunnel = Tunnel::quick(quick());
         let json = serde_json::to_value(&tunnel).unwrap();
-        let back: Tunnel = serde_json::from_value(json).unwrap();
-        assert_eq!(back.account_tag(), "tag");
-        assert_eq!(back.tunnel_secret(), b"secret");
         assert_eq!(
-            back.tunnel_identifier(),
-            "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f"
+            json,
+            serde_json::json!({
+                "type": "quick",
+                "tunnel_id": "6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f",
+                "name": "",
+                "hostname": "abc.trycloudflare.com",
+                "account_tag": "tag",
+                "secret": "c2VjcmV0",
+            })
         );
     }
 
@@ -147,6 +150,20 @@ mod tests {
     #[test]
     fn tunnel_identifier_bytes_parse() {
         let tunnel = Tunnel::quick(quick());
-        assert_eq!(tunnel.tunnel_identifier_bytes().unwrap().len(), 16);
+        assert_eq!(
+            tunnel.tunnel_identifier_bytes().unwrap(),
+            [
+                0x6e, 0xa0, 0x5b, 0xa1, 0x9e, 0x0e, 0x4f, 0x0d, 0x9e, 0x9e, 0x3d, 0x0f, 0x0f, 0x0f,
+                0x0f, 0x0f
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_tunnel_identifier_rejects_invalid_uuids() {
+        assert!(parse_tunnel_identifier("").is_err());
+        assert!(parse_tunnel_identifier("not-a-uuid").is_err());
+        assert!(parse_tunnel_identifier("6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f").is_ok());
+        assert!(parse_tunnel_identifier("6ea05ba1-9e0e-4f0d-9e9e-3d0f0f0f0f0f0").is_err());
     }
 }
