@@ -170,52 +170,62 @@ fn client_config(ca_cert_pem: Option<&[u8]>) -> Result<quinn::ClientConfig> {
 /// A bidirectional handle to a single QUIC stream, shareable across tasks.
 #[derive(Clone)]
 pub(crate) struct QuicStream {
-    parts: Arc<Mutex<StreamParts>>,
+    halves: Arc<StreamHalves>,
 }
 
-struct StreamParts {
-    send: Option<quinn::SendStream>,
-    recv: Option<quinn::RecvStream>,
+struct StreamHalves {
+    send: Mutex<Option<quinn::SendStream>>,
+    recv: Mutex<Option<quinn::RecvStream>>,
 }
 
 impl QuicStream {
     fn new(send: Option<quinn::SendStream>, recv: Option<quinn::RecvStream>) -> Self {
         Self {
-            parts: Arc::new(Mutex::new(StreamParts { send, recv })),
+            halves: Arc::new(StreamHalves {
+                send: Mutex::new(send),
+                recv: Mutex::new(recv),
+            }),
         }
     }
 
     /// The QUIC stream identifier, for diagnostics.
     pub(crate) fn id(&self) -> u64 {
-        let parts = self.parts.lock().unwrap();
-        parts
+        if let Some(identifier) = self
+            .halves
             .send
+            .lock()
+            .unwrap()
             .as_ref()
-            .map(|s| u64::from(s.id()))
-            .or_else(|| parts.recv.as_ref().map(|r| u64::from(r.id())))
+            .map(|send| u64::from(send.id()))
+        {
+            return identifier;
+        }
+        self.halves
+            .recv
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|recv| u64::from(recv.id()))
             .unwrap_or_default()
     }
 
     /// Sends a FIN for the write side.
     pub(crate) fn finish(&self) {
-        let mut parts = self.parts.lock().unwrap();
-        if let Some(send) = parts.send.as_mut() {
+        if let Some(send) = self.halves.send.lock().unwrap().as_mut() {
             let _ = send.finish();
         }
     }
 
     /// Resets the write side (the edge sees a stream reset instead of EOF).
     pub(crate) fn cancel_write(&self) {
-        let mut parts = self.parts.lock().unwrap();
-        if let Some(send) = parts.send.as_mut() {
+        if let Some(send) = self.halves.send.lock().unwrap().as_mut() {
             let _ = send.reset(VarInt::from_u32(0));
         }
     }
 
     /// Stops reading, releasing the flow-control window for abandoned data.
     pub(crate) fn stop_read(&self) {
-        let mut parts = self.parts.lock().unwrap();
-        if let Some(recv) = parts.recv.as_mut() {
+        if let Some(recv) = self.halves.recv.lock().unwrap().as_mut() {
             let _ = recv.stop(VarInt::from_u32(0));
         }
     }
@@ -227,15 +237,11 @@ impl AsyncRead for QuicStream {
         cx: &mut Context<'_>,
         buffer: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // Take the receive half out so it can be polled without holding the
-        // lock, then restore it so other handles can keep reading.
-        let mut recv = match self.parts.lock().unwrap().recv.take() {
-            Some(recv) => recv,
-            None => return Poll::Ready(Ok(0)),
-        };
-        let result = futures_io::AsyncRead::poll_read(Pin::new(&mut recv), cx, buffer);
-        self.parts.lock().unwrap().recv = Some(recv);
-        result
+        let mut recv = self.halves.recv.lock().unwrap();
+        match recv.as_mut() {
+            Some(recv) => futures_io::AsyncRead::poll_read(Pin::new(recv), cx, buffer),
+            None => Poll::Ready(Ok(0)),
+        }
     }
 }
 
@@ -245,28 +251,22 @@ impl AsyncWrite for QuicStream {
         cx: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let mut send = match self.parts.lock().unwrap().send.take() {
-            Some(send) => send,
-            None => {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "write side is closed",
-                )));
-            }
-        };
-        let result = futures_io::AsyncWrite::poll_write(Pin::new(&mut send), cx, buffer);
-        self.parts.lock().unwrap().send = Some(send);
-        result
+        let mut send = self.halves.send.lock().unwrap();
+        match send.as_mut() {
+            Some(send) => futures_io::AsyncWrite::poll_write(Pin::new(send), cx, buffer),
+            None => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "write side is closed",
+            ))),
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut send = match self.parts.lock().unwrap().send.take() {
-            Some(send) => send,
-            None => return Poll::Ready(Ok(())),
-        };
-        let result = futures_io::AsyncWrite::poll_flush(Pin::new(&mut send), cx);
-        self.parts.lock().unwrap().send = Some(send);
-        result
+        let mut send = self.halves.send.lock().unwrap();
+        match send.as_mut() {
+            Some(send) => futures_io::AsyncWrite::poll_flush(Pin::new(send), cx),
+            None => Poll::Ready(Ok(())),
+        }
     }
 
     fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {

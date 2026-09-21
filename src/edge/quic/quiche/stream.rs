@@ -12,6 +12,7 @@
 
 use std::io;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -25,7 +26,9 @@ pub(crate) struct QuicStream {
     inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
     stream_identifier: u64,
-    read_eof: bool,
+    // EOF belongs to the stream, not one clone: request-body and drain
+    // handles may observe the same receive side in succession.
+    read_eof: Arc<AtomicBool>,
 }
 
 impl QuicStream {
@@ -38,7 +41,7 @@ impl QuicStream {
             inner,
             notify,
             stream_identifier,
-            read_eof: false,
+            read_eof: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -106,19 +109,19 @@ impl AsyncRead for QuicStream {
             if g.closed {
                 return Poll::Ready(Err(closed_error()));
             }
-            if this.read_eof {
+            if this.read_eof.load(Ordering::Relaxed) {
                 return Poll::Ready(Ok(0));
             }
             match g.connection.stream_recv(this.stream_identifier, buffer) {
                 Ok((0, true)) => {
-                    this.read_eof = true;
+                    this.read_eof.store(true, Ordering::Relaxed);
                     drop(g);
                     this.notify.notify_waiters();
                     return Poll::Ready(Ok(0));
                 }
                 Ok((n, fin)) => {
                     if fin {
-                        this.read_eof = true;
+                        this.read_eof.store(true, Ordering::Relaxed);
                     }
                     drop(g);
                     this.notify.notify_waiters();
@@ -134,7 +137,7 @@ impl AsyncRead for QuicStream {
             match g.connection.stream_recv(this.stream_identifier, buffer) {
                 Ok((0, true)) => {
                     g.read_wakers.remove(&this.stream_identifier);
-                    this.read_eof = true;
+                    this.read_eof.store(true, Ordering::Relaxed);
                     drop(g);
                     this.notify.notify_waiters();
                     return Poll::Ready(Ok(0));
@@ -142,7 +145,7 @@ impl AsyncRead for QuicStream {
                 Ok((n, fin)) => {
                     g.read_wakers.remove(&this.stream_identifier);
                     if fin {
-                        this.read_eof = true;
+                        this.read_eof.store(true, Ordering::Relaxed);
                     }
                     drop(g);
                     this.notify.notify_waiters();
