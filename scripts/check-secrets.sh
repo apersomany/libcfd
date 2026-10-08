@@ -2,8 +2,8 @@
 # Verifies credential hygiene: every live-test state file must be gitignored
 # and no source file may print the token or a tunnel secret.
 #
-# Used by CI to guarantee PLAN.md's "no credential file is tracked, logged,
-# or uploaded" acceptance criterion.
+# Used by CI to guarantee that no credential file is tracked, logged,
+# or uploaded.
 
 set -euo pipefail
 

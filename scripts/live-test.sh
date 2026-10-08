@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the live-edge integration tests against the real Cloudflare edge.
 #
-# Selection rules (per PLAN.md):
+# Selection rules:
 #   - Quick-tunnel state is cached in tests/state/quick_tunnel.json and the
 #     tests themselves create one only when no usable cached state exists.
 #   - The named suite runs only when a connector token is available:

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Compiles and tests every supported feature combination (PLAN.md
-# feature-matrix coverage).
+# Compiles and tests every supported feature combination.
 #
 # The quiche backend matrix builds BoringSSL (needs cmake and libclang);
 # those jobs are skipped with a note when the toolchain is unavailable.

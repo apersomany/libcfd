@@ -1,7 +1,7 @@
 # Test suite
 
 The workspace is tested in layers, from offline unit tests up to real
-Cloudflare edge interoperability. See `PLAN.md` for the full design.
+Cloudflare edge interoperability.
 
 ## Layout
 
