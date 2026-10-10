@@ -6,8 +6,9 @@
 //!   pure-Rust rustls/ring crypto provider;
 //! - `quic-edge-quiche`: quiche with its BoringSSL backend.
 //!
-//! The backends are mutually exclusive; enabling `quic-edge-quiche` alongside
-//! `quic-edge` selects quiche (see build.rs).
+//! Feature flags may coexist, but only one backend is selected: enabling
+//! `quic-edge-quiche` alongside `quic-edge` or `quic-edge-quinn` selects
+//! quiche (see the crate's build.rs), including with `--all-features`.
 
 pub(crate) mod serve;
 

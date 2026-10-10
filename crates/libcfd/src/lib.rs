@@ -1,8 +1,9 @@
 #![warn(missing_docs)]
 
 //! `libcfd` is a library that connects to the Cloudflare Tunnel edge and
-//! serves origin traffic, without imposing a particular async runtime on its
-//! users.
+//! serves origin traffic through runtime-neutral public types and `Send`
+//! futures. Built-in network execution requires a consumer-provided Tokio
+//! runtime with I/O and time enabled; the library does not create one.
 //!
 //! # Quick tunnels over QUIC
 //!
@@ -17,7 +18,8 @@
 //! (quick or [`NamedTunnel`] loaded from a credentials file), an [`Origin`]
 //! with HTTP, websocket and TCP handlers, and a [`Transport`] selection
 //! (QUIC, HTTP/2, or auto with QUIC-to-HTTP/2 fallback). On connection loss
-//! it reconnects with exponential backoff.//!
+//! it reconnects with exponential backoff.
+//!
 //! # Feature gates
 //!
 //! - `quick-tunnel`: the quick tunnel HTTP API client and [`QuickTunnel`]
@@ -25,27 +27,34 @@
 //! - `named-tunnel`: [`NamedTunnel`] and the credentials-file loader;
 //! - `quic-edge`: the QUIC edge transport. Defaults to the quinn backend
 //!   (pure-Rust rustls/ring); enable `quic-edge-quiche` to use quiche
-//!   (BoringSSL) instead — the two backends are mutually exclusive and
-//!   quiche wins when both are enabled;
-//! - `h2-edge`: the HTTP/2 edge transport.
+//!   (BoringSSL) instead. Feature flags may coexist, but only one backend
+//!   is selected: quiche takes precedence, including with `--all-features`;
+//! - `quic-edge-quinn`: direct selection of the quinn backend;
+//! - `h2-edge`: the HTTP/2 edge transport;
+//! - `axum-origin`: the optional HTTP-only axum `Router` adapter;
 //!
-//! All four are enabled by default. Transports can be disabled to slim the
-//! dependency tree; the [`Transport`] selection only offers enabled
+//! `quick-tunnel`, `named-tunnel`, `quic-edge`, and `h2-edge` are enabled
+//! by default. Transports can be disabled to slim the dependency tree;
+//! the [`Transport`] selection only offers enabled
 //! transports. A transport feature without a tunnel feature still compiles
 //! (the tunnel-agnostic types remain), but no [`EdgeConnector`] entry point
 //! is available for that combination.
 //!
-//! The QUIC transport implements RFC 9000 (version 1). cloudflared also
-//! offers QUIC version 2; quiche 0.29 does not support it yet, so libcfd
-//! falls back to HTTP/2 if the edge ever stops serving v1. The quinn backend
-//! needs only a C compiler (`ring`); the quiche backend additionally builds
-//! BoringSSL with cmake and libclang.
+//! HTTP/2 fallback requires [`Transport::Auto`] and both transports enabled;
+//! QUIC-only runs do not fall back. The quinn backend needs a C compiler
+//! (`ring`); the quiche backend additionally builds BoringSSL with cmake and
+//! libclang.
 //!
 //! # Runtime notes
-//! - no Tokio types are exposed; callers drive the returned futures on a
-//!   Tokio runtime (execution uses Tokio internally);
+//! - no concrete executor types are exposed; network entry points use
+//!   Tokio sockets, timers, and internal tasks and require an active Tokio
+//!   runtime with I/O and time enabled;
+//! - [`HttpOrigin::handle`] and [`StreamOrigin::connect`] are intentionally
+//!   synchronous. Consumers respond immediately or schedule their own
+//!   asynchronous work with the owned typed responder. The optional axum
+//!   adapter schedules router work with Tokio;
 //! - every public future is `Send`;
-//! - all public entry points return the typed [`Error`] (thiserror); the RPC
+//! - tunnel creation and runs return the typed [`Error`] (thiserror); the RPC
 //!   crate exposes its own typed [`libcfd_rpc::RpcError`] and
 //!   `RegistrationFailure`;
 //! - `tracing` is used for diagnostics and no global subscriber is installed.

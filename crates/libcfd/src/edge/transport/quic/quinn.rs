@@ -33,6 +33,21 @@ const MAXIMUM_INCOMING_STREAMS: u64 = 1024;
 /// A QUIC connection to the edge.
 pub(crate) struct QuicConnection {
     connection: QuinnConnection,
+    endpoint: OwnedEndpoint,
+}
+
+struct OwnedEndpoint(Endpoint);
+
+impl Drop for OwnedEndpoint {
+    fn drop(&mut self) {
+        self.0.close(VarInt::from_u32(0), b"");
+    }
+}
+
+impl Drop for QuicConnection {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 impl QuicConnection {
@@ -50,13 +65,18 @@ impl QuicConnection {
         let mut client_config = client_config(ca_cert_pem)?;
         client_config.transport_config(Arc::new(transport_config()));
         endpoint.set_default_client_config(client_config);
+        let endpoint = OwnedEndpoint(endpoint);
         let connecting = endpoint
+            .0
             .connect(peer, EDGE_SNI)
             .map_err(|e| Error::quic(format!("connect failed: {e}")))?;
         let connection = connecting
             .await
             .map_err(|e| Error::quic(format!("handshake failed: {e}")))?;
-        Ok(QuicConnection { connection })
+        Ok(QuicConnection {
+            connection,
+            endpoint,
+        })
     }
 
     /// Opens the control stream (the first client stream, id 0).
@@ -95,6 +115,11 @@ impl QuicConnection {
             self.connection.close_reason(),
             Some(quinn::ConnectionError::TimedOut)
         )
+    }
+
+    pub(crate) async fn close_and_wait(&mut self, grace_period: Duration) {
+        self.close();
+        let _ = tokio::time::timeout(grace_period, self.endpoint.0.wait_idle()).await;
     }
 
     /// Gracefully closes the connection.

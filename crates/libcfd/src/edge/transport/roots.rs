@@ -1,8 +1,9 @@
 //! Trust store assembly shared by the QUIC and HTTP/2 edge transports.
 //!
-//! Mirrors cloudflared's `tlsconfig` behavior: the system trust store plus
-//! the bundled Cloudflare origin roots, with a user-supplied CA appended
-//! rather than replacing the store.
+//! Loads the first readable system PEM bundle from the paths below, then
+//! appends bundled Cloudflare origin roots and any user-supplied CA. This
+//! does not query a native platform trust store. The quick-tunnel HTTPS API
+//! uses bundled web PKI roots separately.
 
 const SYSTEM_CA_PATHS: &[&str] = &[
     "/etc/ssl/certs/ca-certificates.crt",

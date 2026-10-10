@@ -9,6 +9,10 @@
 //! reimplementing RFC 6455 framing on top of the message API. Raw TCP
 //! proxying is likewise outside axum's HTTP-only model, so
 //! [`StreamOrigin<TcpResponder>`](crate::StreamOrigin) has no axum adapter.
+//!
+//! This opt-in adapter schedules each router call with `tokio::spawn`, so
+//! dispatch requires an active Tokio runtime. Custom origin implementations
+//! remain responsible for scheduling their own asynchronous work.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};

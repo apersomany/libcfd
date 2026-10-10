@@ -381,3 +381,38 @@ fn tunnel_client_into_inner_skips_release() {
         assert_eq!(received, vec![Received::Bootstrap,]);
     });
 }
+
+#[test]
+fn rpc_and_typed_client_futures_are_send() {
+    fn assert_send<T: Send>(_: T) {}
+    let (stream, _peer) = client_stream();
+    let mut rpc = RpcClient::new(stream);
+    assert_send(rpc.bootstrap());
+    let fill_data = String::from("owned fill capture");
+    let decoded_data = String::from("owned decoded value");
+    assert_send(rpc.call(
+        0,
+        0,
+        0,
+        move |_payload| {
+            drop(fill_data);
+            Ok(())
+        },
+        move |_payload| Ok(decoded_data),
+    ));
+    let mut client = TunnelClient::new(rpc);
+    assert_send(client.bootstrap());
+    assert_send(client.register_connection(auth(), &[0; 16], 0, &options()));
+    assert_send(client.unregister_connection());
+    assert_send(client.update_local_configuration(b"{}"));
+    assert_send(client.close());
+}
+
+#[test]
+fn tunnel_auth_debug_omits_secret() {
+    let credentials = auth();
+    let debug = format!("{credentials:?}");
+    assert!(debug.contains("account-tag-123"));
+    assert!(!debug.contains(&format!("{:?}", credentials.tunnel_secret)));
+    assert!(!debug.contains("AQIDBAUGBwgJCgsMDQ4PEA=="));
+}

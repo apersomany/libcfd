@@ -12,7 +12,9 @@ use crate::origin::responder::HttpResponder;
 /// `respond` and the transport delivers it to the edge. Handlers that need
 /// to await origin I/O (e.g. proxying to an origin server) spawn a task
 /// that calls [`send`](HttpResponder::send) or [`fail`](HttpResponder::fail)
-/// when the work completes.
+/// when the work completes. Scheduling that work is the consumer's
+/// responsibility; do not block `handle` waiting for it. Responders are
+/// single-use; dropping one without responding reports a missing response.
 ///
 /// The request body streams from the edge: handlers read it incrementally
 /// through `request.body` (`futures_util::io::AsyncRead`) and may respond

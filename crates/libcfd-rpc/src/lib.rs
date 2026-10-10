@@ -6,6 +6,13 @@
 //! This crate is the only crate allowed to depend on the `capnp` crates. The
 //! main `libcfd` crate interacts with tunnel registration exclusively through
 //! the typed [`tunnel::TunnelClient`] facade.
+//!
+//! Wire schemas live in this crate's `schemas/` directory; generated bindings
+//! are included from the build output. RPC I/O uses [`io::AsyncStream`]
+//! (`futures_io` traits); callers supply and drive the stream without a
+//! concrete executor type in this API. The typed [`tunnel::TunnelClient`]
+//! futures are `Send`. The generic [`RpcClient::call`] boundary requires
+//! `Send` callbacks and decoded output, keeping public call futures `Send`.
 
 /// Server side of the edge's `CloudflaredServer` calls.
 pub mod cloudflared;

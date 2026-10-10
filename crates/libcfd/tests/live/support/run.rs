@@ -4,8 +4,8 @@
 //! Every run holds the exclusive live-state lock, so concurrent test
 //! processes or threads never register the same tunnel twice. A failed run
 //! against a cached quick tunnel invalidates the cache and retries once
-//! with a freshly created tunnel; every path shuts the tunnel down before
-//! returning.
+//! with a freshly created tunnel. Shutdown waits bound the connector task,
+//! not completion of its spawned connection tasks or request draining.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -109,8 +109,9 @@ pub async fn poll_public(
     ))
 }
 
-/// Sends the shutdown signal and waits for the run to stop within
-/// `SHUTDOWN_TIMEOUT`, reporting the run's final error if it had one.
+/// Sends shutdown and waits for the connector task within `SHUTDOWN_TIMEOUT`,
+/// reporting its final error. Success does not prove nested tasks stopped
+/// or in-flight requests drained.
 pub async fn shutdown_bounded(mut run: TunnelRun) -> Result<(), String> {
     let _ = run.shutdown.send(());
     match tokio::time::timeout(SHUTDOWN_TIMEOUT, &mut run.task).await {

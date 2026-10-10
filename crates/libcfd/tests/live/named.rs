@@ -1,9 +1,10 @@
 //! Live-edge named tunnel tests.
 //!
-//! These are ignored by default and run only on demand via
-//! `scripts/live-test.sh`, which requires `NAMED_TUNNEL_TOKEN` (read from
-//! the environment or `tests/state/named-token.txt`). The token is
-//! normalized into `tests/state/named_tunnel.json`, loaded through the
+//! These are ignored by default and run only on demand with
+//! `NAMED_TUNNEL_TOKEN` already set in the environment; no token file is
+//! read. See the workspace root README's opt-in live-test instructions for
+//! target `live`, named filters, feature selection, and prerequisites. The
+//! token is normalized into `tests/state/named_tunnel.json`, loaded through the
 //! credentials-file path, and the edge's remotely-managed configuration
 //! supplies the routed hostname used for the public request. The raw token
 //! is never stored in generated state.

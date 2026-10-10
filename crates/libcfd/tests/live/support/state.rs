@@ -21,7 +21,7 @@ use libcfd::{QuickTunnel, QuickTunnelOptions, create_quick_tunnel};
 
 use super::{DNS_WAIT, POLL_INTERVAL};
 
-/// The state directory, relative to the crate root.
+/// The state directory at the workspace root, resolved from the crate root.
 pub const STATE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/state");
 const QUICK_FILE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -236,16 +236,16 @@ pub fn invalidate_quick() {
     std::fs::remove_file(QUICK_FILE).ok();
 }
 
-/// Parses the named tunnel from `NAMED_TUNNEL_TOKEN`. The live-test runner
-/// sets this variable when eligible state exists and omits the named suite
-/// otherwise, so a missing variable here is a loud failure, never a silent
-/// pass.
+/// Parses the named tunnel from `NAMED_TUNNEL_TOKEN`, supplied by the caller.
+/// No token file is read and no suite is automatically omitted: a missing
+/// variable is a loud failure, never a silent pass.
 #[cfg(feature = "named-tunnel")]
 pub fn named_tunnel_from_token() -> libcfd::NamedTunnel {
     let token = std::env::var("NAMED_TUNNEL_TOKEN").unwrap_or_else(|_| {
         panic!(
-            "NAMED_TUNNEL_TOKEN is not set; run scripts/live-test.sh (which reads \
-             tests/state/named-token.txt) or export the dashboard connector token"
+            "NAMED_TUNNEL_TOKEN is not set; set it securely in the environment, then run \
+             nix develop -c cargo test -p libcfd --test live named:: -- \
+             --ignored --test-threads=1"
         )
     });
     libcfd::NamedTunnel::from_token(&token).expect("named tunnel token should parse")

@@ -1,13 +1,15 @@
 # libcfd
 
-A Rust library port of the Cloudflare Tunnel client. Consumers create tunnels, connect to the edge, and serve origin traffic through their own handlers. Not a CLI or daemon, and it imposes no async runtime on consumers.
+A Rust library port of the Cloudflare Tunnel client. Consumers create tunnels, connect to the edge, and serve origin traffic through their own handlers. Not a CLI or daemon. Its public API is runtime-neutral, but built-in network execution requires a consumer-provided Tokio runtime with I/O and time enabled; consumers own asynchronous origin scheduling.
 
 The `research/cloudflared/` checkout is the behavioral and protocol reference. Treat it as read-only and never copy its source into this workspace; implement behavior independently in Rust.
 
 # Constraints
 
 - Keep the public API async-runtime agnostic; never expose concrete executor types (Tokio, async-std, ...).
-- Every public future must be `Send`.
+- Every public future must be `Send`; the public RPC call boundary requires `Send` callbacks and decoded output.
+- Shutdown signals retain ownership through bounded transport cleanup attempts. Cancellation/drop must close connections and abort library-owned tasks, not detach them; consumer-scheduled origin work remains consumer-owned. Do not claim an overall shutdown bound.
+- Credential `Debug` must redact registration secrets; serialization and raw fields remain sensitive.
 - Never use `capnp-rpc` (its futures are not `Send`). Only `libcfd-rpc` may depend on `capnp` crates.
 - Avoid unnecessary payload copies; prefer borrowing, ownership transfer, or shared buffers.
 - Use `tracing` for diagnostics; never initialize a global subscriber. Never log credentials, tunnel tokens, private keys, or request authorization data.
@@ -19,6 +21,8 @@ The `research/cloudflared/` checkout is the behavioral and protocol reference. T
 - Do not modify generated files when the schema or generation step can be changed instead.
 
 # Validation
+
+Use `nix flake check -L` as the normal validation wrapper (CI runs the same command). It supplies the toolchain/native dependencies and runs secret hygiene, the four checks below, and a default-feature workspace check. For local iteration, use `nix develop` or `nix develop -c <command>`. Testing and opt-in live-test instructions are consolidated in [README.md](README.md).
 
 For every Rust code change, run:
 

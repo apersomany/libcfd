@@ -1,6 +1,5 @@
 //! One-shot event signals shared across connection attempts.
 
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -38,8 +37,13 @@ impl Event {
         self.inner.fired.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn notified(&self) -> impl Future<Output = ()> + Send + '_ {
-        self.inner.notify.notified()
+    pub(crate) async fn notified(&self) {
+        let notified = self.inner.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !self.is_fired() {
+            notified.await;
+        }
     }
 }
 
@@ -48,5 +52,20 @@ impl Clone for Event {
         Self {
             inner: self.inner.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn event_retains_signal_for_late_waiters() {
+        let event = Event::new();
+        event.fire();
+        tokio::time::timeout(std::time::Duration::from_secs(1), event.notified())
+            .await
+            .unwrap();
+        event.notified().await;
     }
 }

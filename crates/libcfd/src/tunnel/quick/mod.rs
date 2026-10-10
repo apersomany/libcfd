@@ -36,7 +36,7 @@ impl Default for QuickTunnelOptions {
 ///
 /// The hostname is the public URL; the account tag, tunnel id and secret are
 /// the credentials used to register with the edge.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct QuickTunnel {
     /// The tunnel id as a UUID string.
     #[serde(rename = "tunnel_id")]
@@ -47,9 +47,22 @@ pub struct QuickTunnel {
     pub hostname: String,
     /// The account tag that owns the tunnel.
     pub account_tag: String,
-    /// The registration secret (opaque bytes; never logged).
+    /// The registration secret (sensitive opaque bytes), redacted in `Debug`
+    /// but included in serialization.
     #[serde(with = "crate::tunnel::secret")]
     pub secret: Vec<u8>,
+}
+
+impl std::fmt::Debug for QuickTunnel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuickTunnel")
+            .field("tunnel_identifier", &self.tunnel_identifier)
+            .field("name", &self.name)
+            .field("hostname", &self.hostname)
+            .field("account_tag", &self.account_tag)
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl QuickTunnel {
@@ -68,7 +81,7 @@ impl QuickTunnel {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QuickTunnelResponse {
     #[serde(default)]
     success: bool,
@@ -78,7 +91,7 @@ struct QuickTunnelResponse {
     errors: Vec<QuickTunnelError>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QuickTunnelResult {
     #[serde(default)]
     #[serde(rename = "id")]
@@ -105,7 +118,9 @@ struct QuickTunnelError {
 /// Requests a new quick tunnel from the service.
 ///
 /// This mirrors `cloudflared tunnel --url` with no account: the service
-/// assigns the tunnel and returns its credentials.
+/// assigns the tunnel and returns its credentials. Requires an active
+/// Tokio runtime with I/O and time enabled. HTTPS verification uses bundled
+/// `webpki-roots`, not the OS trust store or edge `ca_cert_pem` options.
 pub async fn create_quick_tunnel(options: &QuickTunnelOptions) -> Result<QuickTunnel> {
     let url = format!("{}/tunnel", options.service_url.trim_end_matches('/'));
     let headers = vec![(

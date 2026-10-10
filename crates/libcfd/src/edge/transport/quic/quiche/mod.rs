@@ -42,6 +42,13 @@ pub(crate) struct QuicConnection {
     pub(crate) inner: Arc<Mutex<Inner>>,
     notify: Arc<Notify>,
     sequence_tx: watch::Sender<u64>,
+    driver: crate::edge::OwnedTask<()>,
+}
+
+impl Drop for QuicConnection {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 impl QuicConnection {
@@ -89,7 +96,7 @@ impl QuicConnection {
         let notify = Arc::new(Notify::new());
         let (sequence_tx, _) = watch::channel(0u64);
 
-        tokio::task::spawn(drive(
+        let driver = crate::edge::OwnedTask::spawn(drive(
             socket,
             inner.clone(),
             notify.clone(),
@@ -100,6 +107,7 @@ impl QuicConnection {
             inner,
             notify,
             sequence_tx,
+            driver,
         };
         connection.wait_established().await?;
         Ok(connection)
@@ -171,6 +179,17 @@ impl QuicConnection {
     /// Whether the connection ended with an idle timeout.
     pub(crate) fn timed_out(&self) -> bool {
         self.inner.lock().unwrap().timed_out
+    }
+
+    pub(crate) async fn close_and_wait(&mut self, grace_period: Duration) {
+        self.close();
+        if tokio::time::timeout(grace_period, &mut self.driver)
+            .await
+            .is_err()
+        {
+            self.driver.abort();
+            let _ = (&mut self.driver).await;
+        }
     }
 
     /// Gracefully closes the connection.
@@ -309,6 +328,7 @@ pub(crate) async fn drive(
                 wake_write.push(w.clone());
             }
             g.write_wakers.clear();
+            // The local stop signal must not skip quiche's close-frame flush and draining.
             let closed = g.connection.is_closed();
             if closed {
                 g.closed = true;
@@ -350,5 +370,148 @@ pub(crate) async fn drive(
         // Bump sequence every loop so watch subscribers (wait_established, serve_requests) wake and re-check state.
         sequence = sequence.wrapping_add(1);
         let _ = sequence_tx.send(sequence);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn close_and_wait_emits_connection_close_before_stopping_driver() {
+        use boring::asn1::Asn1Time;
+        use boring::hash::MessageDigest;
+        use boring::pkey::PKey;
+        use boring::rsa::Rsa;
+        use boring::ssl::{SslContextBuilder, SslMethod};
+        use boring::x509::{X509, X509NameBuilder};
+
+        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "localhost").unwrap();
+        let name = name.build();
+        let mut certificate = X509::builder().unwrap();
+        certificate.set_version(2).unwrap();
+        certificate.set_subject_name(&name).unwrap();
+        certificate.set_issuer_name(&name).unwrap();
+        certificate.set_pubkey(&key).unwrap();
+        certificate
+            .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        certificate
+            .set_not_after(&Asn1Time::days_from_now(1).unwrap())
+            .unwrap();
+        certificate.sign(&key, MessageDigest::sha256()).unwrap();
+        let mut server_tls = SslContextBuilder::new(SslMethod::tls_server()).unwrap();
+        server_tls.set_certificate(&certificate.build()).unwrap();
+        server_tls.set_private_key(&key).unwrap();
+        let mut server_config =
+            quiche::Config::with_boring_ssl_ctx_builder(quiche::PROTOCOL_VERSION, server_tls)
+                .unwrap();
+        server_config.set_application_protos(&[EDGE_ALPN]).unwrap();
+        let mut client_config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
+        // This peer and its ephemeral certificate exist only inside this test.
+        client_config.verify_peer(false);
+        client_config.set_application_protos(&[EDGE_ALPN]).unwrap();
+        client_config.set_initial_rtt(Duration::from_millis(1));
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let local = socket.local_addr().unwrap();
+        let peer = peer_socket.local_addr().unwrap();
+        socket.connect(peer).await.unwrap();
+        let mut client = quiche::connect(
+            Some("localhost"),
+            &quiche::ConnectionId::from_ref(&[1; 16]),
+            local,
+            peer,
+            &mut client_config,
+        )
+        .unwrap();
+        let mut server = quiche::accept(
+            &quiche::ConnectionId::from_ref(&[2; 16]),
+            None,
+            peer,
+            local,
+            &mut server_config,
+        )
+        .unwrap();
+        let mut packet = [0; 65535];
+        for _ in 0..16 {
+            while let Ok((length, info)) = client.send(&mut packet) {
+                server
+                    .recv(
+                        &mut packet[..length],
+                        quiche::RecvInfo {
+                            from: local,
+                            to: info.to,
+                        },
+                    )
+                    .unwrap();
+            }
+            while let Ok((length, info)) = server.send(&mut packet) {
+                client
+                    .recv(
+                        &mut packet[..length],
+                        quiche::RecvInfo {
+                            from: peer,
+                            to: info.to,
+                        },
+                    )
+                    .unwrap();
+            }
+            if client.is_established() && server.is_established() {
+                break;
+            }
+        }
+        assert!(client.is_established() && server.is_established());
+
+        let inner = Arc::new(Mutex::new(Inner {
+            connection: client,
+            read_wakers: HashMap::new(),
+            write_wakers: HashMap::new(),
+            accepted: HashSet::from([0]),
+            established: true,
+            closed: false,
+            timed_out: false,
+            close_reason: None,
+        }));
+        let notify = Arc::new(Notify::new());
+        let (sequence_tx, mut sequence_rx) = watch::channel(0);
+        let driver = crate::edge::OwnedTask::spawn(drive(
+            socket,
+            inner.clone(),
+            notify.clone(),
+            sequence_tx.clone(),
+        ));
+        let mut connection = QuicConnection {
+            inner,
+            notify,
+            sequence_tx,
+            driver,
+        };
+        // Wait for the driver to loop and park before waking it with close().
+        tokio::time::timeout(Duration::from_secs(1), sequence_rx.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        let receive_close = async {
+            loop {
+                let (length, from) = peer_socket.recv_from(&mut packet).await.unwrap();
+                server
+                    .recv(&mut packet[..length], quiche::RecvInfo { from, to: peer })
+                    .unwrap();
+                if let Some(error) = server.peer_error() {
+                    assert!(error.is_app);
+                    assert_eq!(error.error_code, 0);
+                    break;
+                }
+            }
+        };
+        let ((), received) = tokio::join!(
+            connection.close_and_wait(Duration::from_secs(1)),
+            tokio::time::timeout(Duration::from_secs(1), receive_close),
+        );
+        received.expect("peer must decode CONNECTION_CLOSE before the driver stops");
     }
 }

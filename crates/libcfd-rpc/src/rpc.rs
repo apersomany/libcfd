@@ -10,9 +10,9 @@ use crate::rpc_capnp;
 /// allocated monotonically from 0 and the bootstrapped capability is
 /// tracked as import id 0.
 ///
-/// All capnp message construction and decoding happens in synchronous
-/// helpers so no non-`Send` capnp state is held across an await, keeping
-/// every future `Send`.
+/// Capnp message construction and decoding use synchronous helpers so no
+/// non-`Send` capnp state is held across an await. The generic [`call`](Self::call)
+/// boundary requires `Send` callbacks and decoded output.
 pub struct RpcClient<S> {
     stream: S,
     next_question: u32,
@@ -89,13 +89,52 @@ impl<S: AsyncStream + Unpin> RpcClient<S> {
 
     /// Performs a method call on an imported capability, decodes the results
     /// payload with `decode`, then sends `finish` for the question.
-    pub async fn call<T>(
+    ///
+    /// Both callbacks and `T` must be `Send`, so the returned future can be
+    /// moved between threads. Cap'n Proto builders/readers stay local to the
+    /// synchronous callbacks and must not escape into decoded output.
+    ///
+    /// Non-`Send` fill captures are rejected.
+    ///
+    /// ```compile_fail,E0277
+    /// use libcfd_rpc::{AsyncStream, RpcClient};
+    /// fn non_send_call<S: AsyncStream>(client: &mut RpcClient<S>) {
+    ///     let local = std::rc::Rc::new(1);
+    ///     let _future = client.call(0, 0, 0,
+    ///         move |_| { drop(local); Ok(()) },
+    ///         |_| Ok(()));
+    /// }
+    /// ```
+    ///
+    /// Non-`Send` decode captures are rejected.
+    ///
+    /// ```compile_fail,E0277
+    /// use libcfd_rpc::{AsyncStream, RpcClient};
+    /// fn non_send_call<S: AsyncStream>(client: &mut RpcClient<S>) {
+    ///     let local = std::rc::Rc::new(1);
+    ///     let _future = client.call(0, 0, 0,
+    ///         |_| Ok(()),
+    ///         move |_| { drop(local); Ok(()) });
+    /// }
+    /// ```
+    ///
+    /// Non-`Send` decoded output is rejected.
+    ///
+    /// ```compile_fail,E0277
+    /// use libcfd_rpc::{AsyncStream, RpcClient};
+    /// fn non_send_call<S: AsyncStream>(client: &mut RpcClient<S>) {
+    ///     let _future = client.call(0, 0, 0,
+    ///         |_| Ok(()),
+    ///         |_| Ok(std::rc::Rc::new(1)));
+    /// }
+    /// ```
+    pub async fn call<T: Send>(
         &mut self,
         import_identifier: u32,
         interface_identifier: u64,
         method_identifier: u16,
-        fill_parameters: impl FnOnce(&mut rpc_capnp::payload::Builder<'_>) -> Result<()>,
-        decode: impl FnOnce(rpc_capnp::payload::Reader<'_>) -> Result<T>,
+        fill_parameters: impl FnOnce(&mut rpc_capnp::payload::Builder<'_>) -> Result<()> + Send,
+        decode: impl FnOnce(rpc_capnp::payload::Reader<'_>) -> Result<T> + Send,
     ) -> Result<T> {
         if !self.has_bootstrap {
             return Err(RpcError::Protocol("call before bootstrap".into()));

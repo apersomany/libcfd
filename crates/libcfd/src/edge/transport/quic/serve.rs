@@ -31,10 +31,13 @@ pub(crate) async fn serve_requests(
     connection: Arc<QuicConnection>,
     origin: Arc<Origin>,
     configuration_handler: Arc<EdgeConfigurationHandler>,
+    shutdown: Arc<crate::edge::event::Event>,
+    grace_period: Duration,
 ) -> Result<()> {
     let mut tasks = tokio::task::JoinSet::new();
-    loop {
+    let result = loop {
         tokio::select! {
+            _ = shutdown.notified() => break Ok(()),
             joined = tasks.join_next(), if !tasks.is_empty() => {
                 match joined {
                     Some(Ok(Err(e))) => {
@@ -61,17 +64,26 @@ pub(crate) async fn serve_requests(
                         });
                     }
                     Ok(None) => {
-                        return Err(Error::quic(
+                        break Err(Error::quic(
                             connection
                                 .close_reason()
                                 .unwrap_or_else(|| "connection closed".into()),
                         ));
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => break Err(e),
                 }
             }
         }
+    };
+    if shutdown.is_fired() {
+        let _ = tokio::time::timeout(grace_period, async {
+            while tasks.join_next().await.is_some() {}
+        })
+        .await;
     }
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
+    result
 }
 
 async fn serve_stream(
@@ -156,9 +168,8 @@ async fn handle_quic_http(
     tracing::trace!(stream = stream.id(), "response sent");
 
     // Drain unconsumed request body bytes so the edge's flow-control credit is not held forever.
-    drain_unread(stream);
-
     response_stream.finish();
+    drain_unread(stream).await;
     Ok(())
 }
 
@@ -287,44 +298,42 @@ fn encode_response_metadata(response: &Response) -> Vec<(String, String)> {
     metadata
 }
 
-fn drain_unread(stream: QuicStream) {
-    tokio::task::spawn(async move {
-        let mut drain = stream;
-        let mut buffer = [0u8; 8192];
-        let mut total: u64 = 0;
-        let mut read = 0;
-        let mut gave_up = false;
-        loop {
-            let result = tokio::time::timeout(DRAIN_TIMEOUT, drain.read(&mut buffer)).await;
-            match result {
-                Ok(Ok(n)) if n > 0 => {
-                    total = total.saturating_add(n as u64);
-                    if total >= DRAIN_LIMIT {
-                        gave_up = true;
-                        break;
-                    }
-                }
-                Ok(Ok(_)) => break, // EOF
-                Ok(Err(_)) => {
+async fn drain_unread(stream: QuicStream) {
+    let mut drain = stream;
+    let mut buffer = [0u8; 8192];
+    let mut total: u64 = 0;
+    let mut read = 0;
+    let mut gave_up = false;
+    loop {
+        let result = tokio::time::timeout(DRAIN_TIMEOUT, drain.read(&mut buffer)).await;
+        match result {
+            Ok(Ok(n)) if n > 0 => {
+                total = total.saturating_add(n as u64);
+                if total >= DRAIN_LIMIT {
                     gave_up = true;
                     break;
                 }
-                Err(_) => {
-                    gave_up = true;
-                    break; // drain timed out; give up
-                }
             }
-            read += 1;
-            if read > 4096 {
+            Ok(Ok(_)) => break, // EOF
+            Ok(Err(_)) => {
                 gave_up = true;
                 break;
             }
+            Err(_) => {
+                gave_up = true;
+                break; // drain timed out; give up
+            }
         }
-        if gave_up {
-            // Stop the read side so abandoned uploads beyond the drain limit do not hold the flow-control window open (cloudflared cancels the stream too).
-            drain.stop_read();
+        read += 1;
+        if read > 4096 {
+            gave_up = true;
+            break;
         }
-    });
+    }
+    if gave_up {
+        // Stop the read side so abandoned uploads beyond the drain limit do not hold the flow-control window open (cloudflared cancels the stream too).
+        drain.stop_read();
+    }
 }
 
 #[cfg(test)]

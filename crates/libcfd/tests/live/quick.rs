@@ -1,11 +1,9 @@
 //! Live-edge quick tunnel tests.
 //!
 //! These talk to the real Cloudflare edge and the trycloudflare.com API, so
-//! they are ignored by default and only run on demand:
-//!
-//! ```text
-//! scripts/live-test.sh
-//! ```
+//! they are ignored by default and only run on demand. See the workspace
+//! root README's opt-in live-test instructions for target `live`, quick
+//! filters, feature selection, and prerequisites.
 //!
 //! Credentials are cached in `tests/state/quick_tunnel.json` (gitignored)
 //! and reused across runs; a cached tunnel that fails to serve is replaced

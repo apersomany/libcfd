@@ -40,12 +40,21 @@ pub struct ConnectionOptions {
 }
 
 /// Credentials proving ownership of the tunnel.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct TunnelAuth {
     /// The account tag that owns the tunnel.
     pub account_tag: String,
-    /// The tunnel secret (opaque bytes; never logged).
+    /// The tunnel secret (sensitive opaque bytes), redacted in `Debug`.
     pub tunnel_secret: Vec<u8>,
+}
+
+impl std::fmt::Debug for TunnelAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TunnelAuth")
+            .field("account_tag", &self.account_tag)
+            .field("tunnel_secret", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// A rejected registration.

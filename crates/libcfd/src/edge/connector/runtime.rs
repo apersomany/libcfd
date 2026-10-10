@@ -7,9 +7,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "h2-edge")]
-use tokio::sync::Notify;
-
 use crate::edge::configuration::EdgeConfigurationHandler;
 use crate::edge::control::{self, RegistrationOptions};
 use crate::edge::event::Event;
@@ -64,10 +61,9 @@ pub(crate) struct EdgeRunParameters {
 /// A transport-agnostic edge connection.
 ///
 /// Implementations register via the libcfd-rpc control stream, dispatch
-/// request streams to the shared [`Origin`], keep the connection alive, and
-/// drain in-flight work bounded by the grace period on shutdown. The
-/// [`EdgeConnector`](super::EdgeConnector) drives discovery, connection
-/// establishment and retries over this abstraction.
+/// request streams to the shared [`Origin`], and keep the connection alive.
+/// Shutdown retains ownership through grace-period-bounded cleanup attempts.
+/// Dropping a run closes its transport and aborts library-owned tasks.
 pub(crate) trait EdgeConnection: Send {
     fn run(
         self: Box<Self>,
@@ -103,7 +99,9 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
         number_previous_attempts: attempt.min(u8::MAX as u32) as u8,
         ..Default::default()
     };
-    let (_details, client) = match tokio::time::timeout(
+    let registration = tokio::select! {
+        _ = shutdown.notified() => return ServeAttempt { result: Ok(()), registered_at: None, quic_timed_out: false },
+        result = tokio::time::timeout(
         control::RPC_TIMEOUT,
         control::register(
             &connection,
@@ -111,9 +109,9 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
             &registration_options,
             &configuration_json,
         ),
-    )
-    .await
-    {
+        ) => result,
+    };
+    let (_details, client) = match registration {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => return ServeAttempt::failed(e),
         Err(_) => return ServeAttempt::failed(Error::quic("registration timed out")),
@@ -127,32 +125,35 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
 
     let connection = Arc::new(*connection);
     let configuration_handler = Arc::new(EdgeConfigurationHandler::new(on_remote_configuration));
-    let mut serve_handle = tokio::spawn(serve::serve_requests(
-        connection.clone(),
-        origin,
-        configuration_handler,
-    ));
-
-    let serve_result = tokio::select! {
-        _ = shutdown.notified() => None,
-        result = &mut serve_handle => Some(result),
+    let serve_result = {
+        let serving = serve::serve_requests(
+            connection.clone(),
+            origin,
+            configuration_handler,
+            shutdown.clone(),
+            grace_period,
+        );
+        tokio::pin!(serving);
+        tokio::select! {
+            _ = shutdown.notified() => {
+                let _ = tokio::join!(control::unregister(client, grace_period), &mut serving);
+                None
+            }
+            result = &mut serving => {
+                let _ = control::unregister(client, grace_period).await;
+                Some(result)
+            }
+        }
     };
-    let _ = control::unregister(client, grace_period).await;
-    let shutdown_fired = shutdown.is_fired();
-    if shutdown_fired {
-        // cloudflared waits out the grace period after unregistration so in-flight requests finish before the connection closes.
-        tokio::time::sleep(grace_period).await;
-    }
     let quic_timed_out = connection.timed_out();
-    connection.close();
-    if !shutdown_fired {
-        serve_handle.abort();
-    }
+    let mut connection = Arc::try_unwrap(connection)
+        .unwrap_or_else(|_| unreachable!("serving released the connection"));
+    connection.close_and_wait(grace_period).await;
     let result = match serve_result {
         None => Ok(()),
-        Some(Ok(Ok(()))) => Err(Error::quic("serve loop ended unexpectedly")),
-        Some(Ok(Err(e))) => Err(e),
-        Some(Err(e)) => Err(Error::quic(format!("serve task failed: {e}"))),
+        Some(Ok(())) if shutdown.is_fired() => Ok(()),
+        Some(Ok(())) => Err(Error::quic("serve loop ended unexpectedly")),
+        Some(Err(e)) => Err(e),
     };
     ServeAttempt {
         result,
@@ -197,61 +198,25 @@ async fn run_h2(connection: Box<H2EdgeConnection>, parameters: EdgeRunParameters
         configuration_json: Arc::new(configuration_json),
         configuration_handler: Arc::new(EdgeConfigurationHandler::new(on_remote_configuration)),
         shutdown: shutdown.clone(),
-        control_shutdown: Arc::new(Notify::new()),
+        control_shutdown: Arc::new(Event::new()),
         registered,
         grace_period,
     });
-    let mut serve_handle = tokio::spawn(connection.serve(shared));
-
-    // Registration completes inside serve(); wait for it so the reconnect backoff resets on success.
-    let registered_at = match tokio::time::timeout(control::RPC_TIMEOUT, async {
-        let signal = registered_wait;
-        signal.notified().await;
-    })
-    .await
-    {
-        Ok(()) => Some(std::time::Instant::now()),
-        Err(_) => None,
-    };
-
+    let serving = connection.serve(shared);
+    tokio::pin!(serving);
+    let mut registered_at = None;
     let serve_result = tokio::select! {
-        _ = shutdown.notified() => {
-            // serve() breaks on shutdown and drains in-flight streams plus the unregister RPC; give it the grace period to finish.
-            match tokio::time::timeout(grace_period, &mut serve_handle).await {
-                Ok(Ok(Ok(()))) => None,
-                Ok(Ok(Err(e))) => {
-                    return ServeAttempt {
-                        result: Err(e),
-                        registered_at,
-                        quic_timed_out: false,
-                    }
-                }
-                Ok(Err(e)) => {
-                    return ServeAttempt {
-                        result: Err(Error::h2(format!("serve task failed: {e}"))),
-                        registered_at,
-                        quic_timed_out: false,
-                    }
-                }
-                Err(_) => {
-                    serve_handle.abort();
-                    None
-                }
-            }
+        biased;
+        _ = registered_wait.notified() => {
+            registered_at = Some(std::time::Instant::now());
+            serving.await
         }
-        result = &mut serve_handle => Some(result),
+        result = &mut serving => result,
     };
     let result = match serve_result {
-        None => Ok(()),
-        Some(Ok(Ok(()))) => {
-            if shutdown.is_fired() {
-                Ok(())
-            } else {
-                Err(Error::h2("edge closed the connection"))
-            }
-        }
-        Some(Ok(Err(e))) => Err(e),
-        Some(Err(e)) => Err(Error::h2(format!("serve task failed: {e}"))),
+        Ok(()) if shutdown.is_fired() => Ok(()),
+        Ok(()) => Err(Error::h2("edge closed the connection")),
+        Err(e) => Err(e),
     };
     ServeAttempt {
         result,

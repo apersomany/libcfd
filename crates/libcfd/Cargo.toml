@@ -1,6 +1,6 @@
 [package]
 name = "libcfd"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [features]
@@ -45,7 +45,7 @@ futures-util = { version = "0.3", features = ["io"] }
 getrandom = "0.4"
 h2 = { version = "0.4", optional = true }
 http = "1.5"
-libcfd-rpc = { version = "0.2.0", path = "../libcfd-rpc" }
+libcfd-rpc = { version = "0.3.0", path = "../libcfd-rpc" }
 quiche = { version = "0.29", optional = true }
 quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "futures-io"], optional = true }
 rustls = { version = "0.23", optional = true, default-features = false, features = ["logging", "ring", "std", "tls12"] }

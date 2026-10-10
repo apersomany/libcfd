@@ -14,12 +14,13 @@ use super::parse_tunnel_identifier;
 /// The Serde layout matches cloudflared's credentials file exactly:
 /// `AccountTag`, `TunnelSecret` (standard base64) and `TunnelID` (a UUID
 /// string), with an optional `Endpoint` region override.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NamedTunnel {
     /// The account tag that owns the tunnel.
     #[serde(rename = "AccountTag")]
     pub account_tag: String,
-    /// The registration secret (opaque bytes; never logged).
+    /// The registration secret (sensitive opaque bytes), redacted in `Debug`
+    /// but included in serialization.
     #[serde(rename = "TunnelSecret", with = "crate::tunnel::secret")]
     pub tunnel_secret: Vec<u8>,
     /// The tunnel id as a UUID string.
@@ -28,6 +29,17 @@ pub struct NamedTunnel {
     /// An optional edge region override stored in the credentials.
     #[serde(rename = "Endpoint", default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
+}
+
+impl std::fmt::Debug for NamedTunnel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NamedTunnel")
+            .field("account_tag", &self.account_tag)
+            .field("tunnel_identifier", &self.tunnel_identifier)
+            .field("endpoint", &self.endpoint)
+            .field("tunnel_secret", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl NamedTunnel {
@@ -53,7 +65,8 @@ impl NamedTunnel {
     /// `cloudflared tunnel run --token`: a standard-base64 JSON payload with
     /// compact keys `a` (account tag), `s` (secret, base64) and `t` (tunnel
     /// id), plus an optional `e` endpoint, matching cloudflared's
-    /// `connection.TunnelToken` layout. The secret is never logged.
+    /// `connection.TunnelToken` layout. `Debug` redacts the registration secret;
+    /// raw fields and serialization still contain sensitive credentials.
     pub fn from_token(token: &str) -> Result<NamedTunnel> {
         let raw = base64::engine::general_purpose::STANDARD
             .decode(token)

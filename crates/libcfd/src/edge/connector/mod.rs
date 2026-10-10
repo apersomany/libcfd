@@ -45,6 +45,18 @@ impl EdgeConnector {
 
     /// Runs the tunnel until `shutdown` resolves or a permanent error
     /// occurs, reconnecting with exponential backoff on connection loss.
+    ///
+    /// Requires an active Tokio runtime with I/O and time enabled for edge
+    /// sockets, timers, and internal tasks. Origin dispatch is synchronous;
+    /// consumers schedule any asynchronous origin work themselves.
+    ///
+    /// Discovery and establishment are interruptible. Once connected, shutdown
+    /// awaits transport unregister/drain/close attempts with grace-period
+    /// timeouts, then aborts and joins remaining library-owned serving tasks.
+    /// This does not guarantee completed requests or an overall shutdown bound;
+    /// synchronous handlers must not block, and consumer-scheduled work remains
+    /// consumer-owned. Dropping this future closes connections and aborts owned
+    /// tasks without graceful unregister/drain.
     pub async fn run(
         &self,
         tunnel: Tunnel,
@@ -52,13 +64,7 @@ impl EdgeConnector {
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let shutdown_flag = Arc::new(Event::new());
-        tokio::task::spawn({
-            let flag = shutdown_flag.clone();
-            async move {
-                shutdown.await;
-                flag.fire();
-            }
-        });
+        tokio::pin!(shutdown);
         let tunnel = Arc::new(tunnel);
         let origin = Arc::new(origin);
         #[cfg(quic_any)]
@@ -79,7 +85,11 @@ impl EdgeConnector {
                 .region
                 .clone()
                 .or_else(|| tunnel.region_override());
-            let edges = match discover_edges(region.as_deref()).await {
+            let discovery = tokio::select! {
+                _ = &mut shutdown => return Ok(()),
+                result = discover_edges(region.as_deref()) => result,
+            };
+            let edges = match discovery {
                 Ok(edges) => edges,
                 Err(e) => {
                     // Discovery failure is retryable: cloudflared keeps retrying rather than aborting the run.
@@ -88,7 +98,7 @@ impl EdgeConnector {
                     let delay = retry_delay(attempt, self.options.backoff);
                     tracing::debug!(attempt, ?delay, "retrying edge discovery");
                     tokio::select! {
-                        _ = shutdown_flag.notified() => return Ok(()),
+                        _ = &mut shutdown => return Ok(()),
                         _ = tokio::time::sleep(delay) => {}
                     }
                     continue;
@@ -99,37 +109,41 @@ impl EdgeConnector {
             #[cfg(not(quic_any))]
             let _quic_broken = false;
             for edge in &edges {
-                let attempt_result = tokio::select! {
-                    _ = shutdown_flag.notified() => return Ok(()),
-                    result = async {
-                        let connection = match build_connection(
-                            transport,
-                            edge.address,
-                            self.options.ca_cert_pem.as_deref(),
-                            self.options.connect_timeout,
-                        )
-                        .await
-                        {
-                            Ok(connection) => connection,
-                            Err(e) => return ServeAttempt::failed(e),
-                        };
-                        connection
-                            .run(EdgeRunParameters {
-                                edge: edge.address,
-                                tunnel: tunnel.clone(),
-                                origin: origin.clone(),
-                                shutdown: shutdown_flag.clone(),
-                                configuration_json: self.options.configuration_json.clone(),
-                                grace_period: self.options.grace_period,
-                                attempt,
-                                on_remote_configuration: self
-                                    .options
-                                    .on_remote_configuration
-                                    .clone(),
-                            })
-                            .await
-                    } => result,
+                let established = tokio::select! {
+                    _ = &mut shutdown => return Ok(()),
+                    result = build_connection(
+                        transport,
+                        edge.address,
+                        self.options.ca_cert_pem.as_deref(),
+                        self.options.connect_timeout,
+                    ) => result,
                 };
+                let attempt_result = match established {
+                    Ok(connection) => {
+                        let run = connection.run(EdgeRunParameters {
+                            edge: edge.address,
+                            tunnel: tunnel.clone(),
+                            origin: origin.clone(),
+                            shutdown: shutdown_flag.clone(),
+                            configuration_json: self.options.configuration_json.clone(),
+                            grace_period: self.options.grace_period,
+                            attempt,
+                            on_remote_configuration: self.options.on_remote_configuration.clone(),
+                        });
+                        tokio::pin!(run);
+                        tokio::select! {
+                            _ = &mut shutdown => {
+                                shutdown_flag.fire();
+                                run.await
+                            }
+                            result = &mut run => result,
+                        }
+                    }
+                    Err(error) => ServeAttempt::failed(error),
+                };
+                if shutdown_flag.is_fired() {
+                    return Ok(());
+                }
                 let ServeAttempt {
                     result,
                     registered_at,
@@ -174,7 +188,7 @@ impl EdgeConnector {
             let delay = retry_delay(attempt, self.options.backoff);
             tracing::debug!(attempt, ?delay, "reconnecting after edge failure");
             tokio::select! {
-                _ = shutdown_flag.notified() => return Ok(()),
+                _ = &mut shutdown => return Ok(()),
                 _ = tokio::time::sleep(delay) => {}
             }
         }

@@ -1,6 +1,6 @@
 //! Top-level orchestration entry points.
 //!
-//! [`run_quick_tunnel`] is the Phase A convenience API: a quick tunnel with
+//! [`run_quick_tunnel`] is the convenience API for a quick tunnel with
 //! an HTTP-only origin over QUIC. The full API is [`EdgeConnector`], which
 //! adds named tunnels, websocket/TCP origins, and HTTP/2 transport.
 
@@ -13,14 +13,15 @@ use crate::tunnel::{QuickTunnel, Tunnel};
 
 /// Options controlling how a tunnel connects to the edge.
 ///
-/// Quick tunnels always use QUIC (as cloudflared forces for them); use
-/// [`EdgeOptions`] for transport selection.
+/// This convenience API always uses QUIC; use [`EdgeConnector`] and
+/// [`EdgeOptions`] to run quick or named tunnels over other transports.
 #[derive(Debug, Clone)]
 pub struct RunOptions {
     /// Edge region override (`--region`); `None` uses the default SRV lookup.
     pub region: Option<String>,
-    /// PEM-encoded CA certificates trusted in addition to the system store
-    /// (mirrors cloudflared's `--ca-cert`).
+    /// PEM-encoded CA certificates appended to the edge's available system
+    /// PEM bundle and bundled Cloudflare origin roots. Does not affect the
+    /// quick-tunnel HTTPS API's bundled web PKI roots.
     pub ca_cert_pem: Option<Vec<u8>>,
     /// JSON configuration pushed to the edge via `updateLocalConfiguration`
     /// for locally-managed tunnels.
@@ -62,7 +63,12 @@ impl From<&RunOptions> for EdgeOptions {
 /// resolves or the connection cannot be re-established.
 ///
 /// On connection loss the tunnel reconnects with exponential backoff, trying
-/// each discovered edge address in turn.
+/// each discovered edge address in turn. Requires an active Tokio runtime
+/// with I/O and time enabled; origin work is scheduled by the consumer.
+/// Shutdown awaits the transport cleanup attempts described by
+/// [`EdgeConnector::run`]; unfinished library-owned serving tasks are aborted
+/// and joined. Dropping this future is not graceful shutdown. Consumer-owned
+/// origin work is not stopped, and completion of every request is not guaranteed.
 pub async fn run_quick_tunnel<O>(
     tunnel: QuickTunnel,
     origin: O,

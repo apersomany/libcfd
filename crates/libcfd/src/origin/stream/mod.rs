@@ -116,7 +116,10 @@ pub struct WebSocketConnection {
 /// transport owns the proxy acknowledgement.
 ///
 /// `connect` is synchronous; consumers that need to await origin I/O spawn a
-/// task that calls the responder when the work completes.
+/// task that calls the responder when the work completes. Scheduling that
+/// work is the consumer's responsibility; do not block `connect` waiting
+/// for it. Responders are single-use, and dropping one without responding
+/// reports a missing response.
 pub trait StreamOrigin<R: StreamResponder>: Send + Sync {
     /// Runs the origin-side handshake or connection setup and writes the
     /// outcome into `respond`.

@@ -130,7 +130,7 @@
 
                 validation = rustPlatform.buildRustPackage {
                   pname = "libcfd-validation";
-                  version = "0.2.0";
+                  version = "0.3.0";
                   src = validationSource;
                   cargoLock.lockFile = ./Cargo.lock;
                   inherit nativeBuildInputs buildInputs;

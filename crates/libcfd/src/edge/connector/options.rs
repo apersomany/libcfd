@@ -26,8 +26,9 @@ pub struct EdgeOptions {
     pub transport: Transport,
     /// Edge region override (`--region`); `None` uses the default SRV lookup.
     pub region: Option<String>,
-    /// PEM-encoded CA certificates trusted in addition to the system store
-    /// (mirrors cloudflared's `--ca-cert`).
+    /// PEM-encoded CA certificates appended to the edge's available system
+    /// PEM bundle and bundled Cloudflare origin roots. Does not affect the
+    /// quick-tunnel HTTPS API's bundled web PKI roots.
     pub ca_cert_pem: Option<Vec<u8>>,
     /// JSON configuration pushed to the edge via `updateLocalConfiguration`
     /// for locally-managed tunnels.
@@ -37,8 +38,9 @@ pub struct EdgeOptions {
     /// Base reconnect delay between failed attempts (exponential backoff).
     /// Cloudflared's base is 1 second.
     pub backoff: Duration,
-    /// Bounded time to wait for a graceful unregister and for in-flight
-    /// requests to drain after shutdown.
+    /// Timeout budget for transport unregister/drain/close attempts, not an
+    /// overall shutdown deadline. Remaining library-owned serving tasks are
+    /// aborted and joined; completion of every request is not guaranteed.
     pub grace_period: Duration,
     /// QUIC failures before `Transport::Auto` falls back to HTTP/2.
     /// Cloudflared's default retry count is 5.

@@ -7,8 +7,11 @@
 //! cargo run --example named_tunnel -- <connector-token>
 //! ```
 //!
+//! Prefer a credentials-file path to avoid tokens in shell history or
+//! process arguments. This example does not read `NAMED_TUNNEL_TOKEN`.
+//!
 //! The credentials file is the JSON cloudflared writes on
-//! `cloudflared tunnel login` / `cloudflared tunnel create`, with keys
+//! `cloudflared tunnel create`, with keys
 //! `AccountTag`, `TunnelID` and `TunnelSecret` (standard base64). The
 //! connector token is what the Zero Trust dashboard shows for
 //! `cloudflared tunnel run --token`.

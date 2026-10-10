@@ -24,7 +24,8 @@ use crate::error::{Error as CrateError, Result};
 ///
 /// Quick tunnels are created through the HTTP API and carry a public
 /// hostname; named tunnels are provisioned by an administrator and loaded
-/// from a credentials file or token.
+/// from a credentials file or token. `Debug` delegates to the identities'
+/// secret-redacting implementations; serialization still contains secrets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Tunnel {
@@ -157,6 +158,38 @@ mod tests {
                 0x0f, 0x0f
             ]
         );
+    }
+
+    #[test]
+    fn tunnel_debug_redacts_registration_secrets() {
+        #[cfg(feature = "quick-tunnel")]
+        {
+            let quick = quick();
+            let secret_bytes = format!("{:?}", quick.secret);
+            for debug in [format!("{quick:?}"), format!("{:?}", Tunnel::quick(quick))] {
+                assert!(debug.contains("abc.trycloudflare.com"));
+                assert!(!debug.contains(&secret_bytes));
+                assert!(!debug.contains("c2VjcmV0"));
+                assert!(!debug.contains("\"secret\""));
+            }
+        }
+        #[cfg(feature = "named-tunnel")]
+        {
+            let named = NamedTunnel {
+                account_tag: "test-account".into(),
+                tunnel_secret: b"top-secret".to_vec(),
+                tunnel_identifier: "550e8400-e29b-41d4-a716-446655440000".into(),
+                endpoint: Some("us-east-1".into()),
+            };
+            let secret_bytes = format!("{:?}", named.tunnel_secret);
+            for debug in [format!("{named:?}"), format!("{:?}", Tunnel::named(named))] {
+                assert!(debug.contains("us-east-1"));
+                assert!(debug.contains("550e8400-e29b-41d4-a716-446655440000"));
+                assert!(!debug.contains(&secret_bytes));
+                assert!(!debug.contains("top-secret"));
+                assert!(!debug.contains("dG9wLXNlY3JldA=="));
+            }
+        }
     }
 
     #[test]

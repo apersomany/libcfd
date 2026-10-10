@@ -45,7 +45,7 @@ pub(crate) struct H2Shared {
     pub configuration_json: Arc<Vec<u8>>,
     pub configuration_handler: Arc<EdgeConfigurationHandler>,
     pub shutdown: Arc<Event>,
-    pub control_shutdown: Arc<tokio::sync::Notify>,
+    pub control_shutdown: Arc<Event>,
     /// Fires once registration completes on the control stream.
     pub registered: Event,
     pub grace_period: Duration,
@@ -96,15 +96,19 @@ impl H2EdgeConnection {
     /// accepts edge streams, runs the registration RPC on the control
     /// stream, and dispatches request streams to the origin handlers.
     ///
-    /// On shutdown the control task unregisters and in-flight streams are
-    /// drained, both bounded by the grace period.
+    /// On shutdown, drives the connection while draining streams and the
+    /// control task's unregister within a shared grace-period timeout, then
+    /// aborts and joins remaining tasks. Dropping the future aborts its tasks
+    /// and drops the underlying connection without graceful cleanup.
     pub(crate) async fn serve(mut self, shared: Arc<H2Shared>) -> Result<()> {
         let (registration_tx, mut registration_rx) = tokio::sync::oneshot::channel();
         let mut registration_tx = Some(registration_tx);
-        let mut control_task: Option<tokio::task::JoinHandle<Result<()>>> = None;
+        let mut control_task: Option<crate::edge::OwnedTask<Result<()>>> = None;
         let mut registration_done = false;
         let mut stream_tasks: tokio::task::JoinSet<Result<()>> = tokio::task::JoinSet::new();
-        loop {
+        let registration_timeout = tokio::time::sleep(control::RPC_TIMEOUT);
+        tokio::pin!(registration_timeout);
+        let result = loop {
             tokio::select! {
                 request = self.connection.accept() => {
                     match request {
@@ -113,7 +117,7 @@ impl H2EdgeConnection {
                                 if control_task.is_none() {
                                     let shared = shared.clone();
                                     let registration_tx = registration_tx.take().expect("control stream handled once");
-                                    control_task = Some(tokio::task::spawn(async move {
+                                    control_task = Some(crate::edge::OwnedTask::spawn(async move {
                                         register::handle_control_stream(request, respond, shared, registration_tx).await
                                     }));
                                 } else {
@@ -130,14 +134,10 @@ impl H2EdgeConnection {
                             }
                         }
                         Some(Err(e)) => {
-                            shared.control_shutdown.notify_waiters();
-                            stream_tasks.abort_all();
-                            return Err(Error::h2(format!("connection error: {e}")));
+                            break Err(Error::h2(format!("connection error: {e}")));
                         }
                         None => {
-                            shared.control_shutdown.notify_waiters();
-                            stream_tasks.abort_all();
-                            return Ok(());
+                            break Ok(());
                         }
                     }
                 }
@@ -146,37 +146,57 @@ impl H2EdgeConnection {
                     match result {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => {
-                            shared.control_shutdown.notify_waiters();
-                            stream_tasks.abort_all();
-                            return Err(e);
+                            break Err(e);
                         }
                         Err(_) => {
-                            shared.control_shutdown.notify_waiters();
-                            stream_tasks.abort_all();
-                            return Err(Error::h2("control stream ended before registration"));
+                            break Err(Error::h2("control stream ended before registration"));
                         }
                     }
                 }
-                _ = tokio::time::sleep(control::RPC_TIMEOUT), if !registration_done => {
-                    shared.control_shutdown.notify_waiters();
-                    stream_tasks.abort_all();
-                    return Err(Error::h2("registration timed out"));
+                _ = &mut registration_timeout, if !registration_done => {
+                    break Err(Error::h2("registration timed out"));
                 }
                 _ = shared.shutdown.notified() => {
-                    shared.control_shutdown.notify_waiters();
-                    break;
+                    break Ok(());
+                }
+                joined = stream_tasks.join_next(), if !stream_tasks.is_empty() => {
+                    if let Some(Ok(Err(error))) = joined {
+                        tracing::debug!(%error, "request stream failed");
+                    }
                 }
             }
+        };
+        shared.control_shutdown.fire();
+        let mut control_joined = false;
+        if shared.shutdown.is_fired() {
+            self.connection.graceful_shutdown();
+            let drain = async {
+                while stream_tasks.join_next().await.is_some() {}
+                if let Some(task) = control_task.as_mut() {
+                    let _ = task.await;
+                    control_joined = true;
+                }
+            };
+            tokio::pin!(drain);
+            // The connection must still be driven while streams and unregister use it.
+            let _ = tokio::time::timeout(shared.grace_period, async {
+                tokio::select! {
+                    _ = &mut drain => {}
+                    _ = std::future::poll_fn(|cx| self.connection.poll_closed(cx)) => {}
+                }
+            })
+            .await;
         }
-        // Graceful shutdown: drain in-flight request streams (cloudflared's activeRequestsWG), then the control task's unregister RPC, both bounded by the grace period.
-        let _ = tokio::time::timeout(shared.grace_period, async {
-            while stream_tasks.join_next().await.is_some() {}
-        })
-        .await;
-        if let Some(task) = control_task {
-            let _ = tokio::time::timeout(shared.grace_period, task).await;
+        stream_tasks.abort_all();
+        while stream_tasks.join_next().await.is_some() {}
+        if let Some(mut task) = control_task {
+            // A completed JoinHandle must not be polled twice.
+            if !control_joined {
+                task.abort();
+                let _ = (&mut task).await;
+            }
         }
-        Ok(())
+        result
     }
 }
 

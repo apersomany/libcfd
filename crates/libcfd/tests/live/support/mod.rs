@@ -1,6 +1,6 @@
-//! Shared support for the libcfd integration test binaries.
+//! Shared support for the libcfd `live` integration target.
 //!
-//! The live-edge tests (`tests/live_quick.rs`, `tests/live_named.rs`) reuse
+//! The live-edge modules (`tests/live/quick.rs`, `tests/live/named.rs`) reuse
 //! these helpers: the HTTPS client, the tunnel state managers, the origin
 //! handlers, and the run/poll/shutdown scaffolding. Nothing here is exposed
 //! by the `libcfd` crate itself.
