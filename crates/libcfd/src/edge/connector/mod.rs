@@ -53,6 +53,8 @@ impl EdgeConnector {
     /// Discovery and establishment are interruptible. Once connected, shutdown
     /// awaits transport unregister/drain/close attempts with grace-period
     /// timeouts, then aborts and joins remaining library-owned serving tasks.
+    /// New requests are accepted until the edge answers the unregister, since
+    /// it keeps routing requests to the connection until then.
     /// This does not guarantee completed requests or an overall shutdown bound;
     /// synchronous handlers must not block, and consumer-scheduled work remains
     /// consumer-owned. Dropping this future closes connections and aborts owned

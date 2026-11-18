@@ -125,18 +125,24 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
 
     let connection = Arc::new(*connection);
     let configuration_handler = Arc::new(EdgeConfigurationHandler::new(on_remote_configuration));
+    let stop_accepting = Arc::new(Event::new());
     let serve_result = {
         let serving = serve::serve_requests(
             connection.clone(),
             origin,
             configuration_handler,
-            shutdown.clone(),
+            stop_accepting.clone(),
             grace_period,
         );
         tokio::pin!(serving);
         tokio::select! {
             _ = shutdown.notified() => {
-                let _ = tokio::join!(control::unregister(client, grace_period), &mut serving);
+                // The edge routes requests here until it processes unregister, so keep accepting until it answers.
+                let unregister = async {
+                    let _ = control::unregister(client, grace_period).await;
+                    stop_accepting.fire();
+                };
+                let _ = tokio::join!(unregister, &mut serving);
                 None
             }
             result = &mut serving => {

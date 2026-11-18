@@ -96,15 +96,18 @@ impl H2EdgeConnection {
     /// accepts edge streams, runs the registration RPC on the control
     /// stream, and dispatches request streams to the origin handlers.
     ///
-    /// On shutdown, drives the connection while draining streams and the
-    /// control task's unregister within a shared grace-period timeout, then
-    /// aborts and joins remaining tasks. Dropping the future aborts its tasks
-    /// and drops the underlying connection without graceful cleanup.
+    /// On shutdown, keeps accepting streams until the control task's
+    /// unregister completes, then sends GOAWAY and drives the connection
+    /// while draining streams within the grace period before aborting and
+    /// joining remaining tasks. Dropping the future aborts its tasks and drops
+    /// the underlying connection without graceful cleanup.
     pub(crate) async fn serve(mut self, shared: Arc<H2Shared>) -> Result<()> {
         let (registration_tx, mut registration_rx) = tokio::sync::oneshot::channel();
         let mut registration_tx = Some(registration_tx);
         let mut control_task: Option<crate::edge::OwnedTask<Result<()>>> = None;
         let mut registration_done = false;
+        let mut unregistering = false;
+        let mut control_joined = false;
         let mut stream_tasks: tokio::task::JoinSet<Result<()>> = tokio::task::JoinSet::new();
         let registration_timeout = tokio::time::sleep(control::RPC_TIMEOUT);
         tokio::pin!(registration_timeout);
@@ -156,7 +159,16 @@ impl H2EdgeConnection {
                 _ = &mut registration_timeout, if !registration_done => {
                     break Err(Error::h2("registration timed out"));
                 }
-                _ = shared.shutdown.notified() => {
+                _ = shared.shutdown.notified(), if !unregistering => {
+                    // The edge routes requests here until it processes unregister, so keep accepting until it answers.
+                    unregistering = true;
+                    shared.control_shutdown.fire();
+                    if control_task.is_none() {
+                        break Ok(());
+                    }
+                }
+                _ = async { control_task.as_mut().expect("unregistering control task").await }, if unregistering => {
+                    control_joined = true;
                     break Ok(());
                 }
                 joined = stream_tasks.join_next(), if !stream_tasks.is_empty() => {
@@ -167,12 +179,11 @@ impl H2EdgeConnection {
             }
         };
         shared.control_shutdown.fire();
-        let mut control_joined = false;
         if shared.shutdown.is_fired() {
             self.connection.graceful_shutdown();
             let drain = async {
                 while stream_tasks.join_next().await.is_some() {}
-                if let Some(task) = control_task.as_mut() {
+                if !control_joined && let Some(task) = control_task.as_mut() {
                     let _ = task.await;
                     control_joined = true;
                 }

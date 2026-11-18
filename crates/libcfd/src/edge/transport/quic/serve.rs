@@ -26,18 +26,19 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Accepts incoming streams and dispatches each new data stream to a
 /// per-request task. The control stream (id 0) is never yielded by
 /// `accept_stream`. Completed streams are removed from the active set so it
-/// stays bounded.
+/// stays bounded. Once `stop_accepting` fires, in-flight streams get the
+/// grace period to finish.
 pub(crate) async fn serve_requests(
     connection: Arc<QuicConnection>,
     origin: Arc<Origin>,
     configuration_handler: Arc<EdgeConfigurationHandler>,
-    shutdown: Arc<crate::edge::event::Event>,
+    stop_accepting: Arc<crate::edge::event::Event>,
     grace_period: Duration,
 ) -> Result<()> {
     let mut tasks = tokio::task::JoinSet::new();
     let result = loop {
         tokio::select! {
-            _ = shutdown.notified() => break Ok(()),
+            _ = stop_accepting.notified() => break Ok(()),
             joined = tasks.join_next(), if !tasks.is_empty() => {
                 match joined {
                     Some(Ok(Err(e))) => {
@@ -75,7 +76,7 @@ pub(crate) async fn serve_requests(
             }
         }
     };
-    if shutdown.is_fired() {
+    if stop_accepting.is_fired() {
         let _ = tokio::time::timeout(grace_period, async {
             while tasks.join_next().await.is_some() {}
         })
