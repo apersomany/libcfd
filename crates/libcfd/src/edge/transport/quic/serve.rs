@@ -290,9 +290,13 @@ fn encode_response_metadata(response: &Response) -> Vec<(String, String)> {
         response.status.as_u16().to_string(),
     )];
     for (name, value) in response.headers.iter() {
+        let val_str = match value.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => String::from_utf8_lossy(value.as_bytes()).to_string(),
+        };
         metadata.push((
             format!("{HEADER_KEY_PREFIX}{name}"),
-            value.to_str().unwrap_or("").to_string(),
+            val_str,
         ));
     }
     metadata

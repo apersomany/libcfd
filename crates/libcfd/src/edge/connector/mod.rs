@@ -87,7 +87,7 @@ impl EdgeConnector {
                 .or_else(|| tunnel.region_override());
             let discovery = tokio::select! {
                 _ = &mut shutdown => return Ok(()),
-                result = discover_edges(region.as_deref()) => result,
+                result = discover_edges(region.as_deref(), self.options.edge_ip_version.as_deref()) => result,
             };
             let edges = match discovery {
                 Ok(edges) => edges,

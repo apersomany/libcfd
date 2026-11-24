@@ -151,9 +151,11 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
         }
     };
     let quic_timed_out = connection.timed_out();
-    let mut connection = Arc::try_unwrap(connection)
-        .unwrap_or_else(|_| unreachable!("serving released the connection"));
-    connection.close_and_wait(grace_period).await;
+    if let Ok(mut connection) = Arc::try_unwrap(connection) {
+        connection.close_and_wait(grace_period).await;
+    } else {
+        tracing::warn!("connection still had active references during shutdown");
+    }
     let result = match serve_result {
         None => Ok(()),
         Some(Ok(())) if shutdown.is_fired() => Ok(()),

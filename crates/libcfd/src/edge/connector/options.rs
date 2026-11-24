@@ -26,6 +26,8 @@ pub struct EdgeOptions {
     pub transport: Transport,
     /// Edge region override (`--region`); `None` uses the default SRV lookup.
     pub region: Option<String>,
+    /// Preferred edge IP version: `"4"`, `"6"`, or `"auto"`.
+    pub edge_ip_version: Option<String>,
     /// PEM-encoded CA certificates appended to the edge's available system
     /// PEM bundle and bundled Cloudflare origin roots. Does not affect the
     /// quick-tunnel HTTPS API's bundled web PKI roots.
@@ -57,6 +59,7 @@ impl std::fmt::Debug for EdgeOptions {
         f.debug_struct("EdgeOptions")
             .field("transport", &self.transport)
             .field("region", &self.region)
+            .field("edge_ip_version", &self.edge_ip_version)
             .field("ca_cert_pem", &self.ca_cert_pem)
             .field("configuration_json", &self.configuration_json)
             .field("connect_timeout", &self.connect_timeout)
@@ -80,6 +83,7 @@ impl Default for EdgeOptions {
         Self {
             transport: default_transport(),
             region: None,
+            edge_ip_version: None,
             ca_cert_pem: None,
             configuration_json: default_configuration_json().into(),
             connect_timeout: Duration::from_secs(15),

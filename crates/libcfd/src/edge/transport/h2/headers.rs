@@ -79,7 +79,10 @@ pub(crate) fn encode_response_headers(response: &Response) -> http::HeaderMap {
     let mut headers = http::HeaderMap::new();
     let mut user_headers: Vec<(String, String)> = Vec::new();
     for (name, value) in response.headers.iter() {
-        let value = value.to_str().unwrap_or("").to_string();
+        let value = match value.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => String::from_utf8_lossy(value.as_bytes()).to_string(),
+        };
         let lower = name.as_str().to_ascii_lowercase();
         if lower == "content-length" {
             headers.append(name.clone(), http::HeaderValue::from_str(&value).unwrap());

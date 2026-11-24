@@ -21,9 +21,10 @@ pub(crate) use stream::QuicStream;
 const MAXIMUM_DATAGRAM_SIZE: usize = 1350;
 const MAXIMUM_IDLE_TIMEOUT_MS: u64 = 5_000;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
-const STREAM_RECEIVE_WINDOW: u64 = 6 * 1024 * 1024;
-const CONNECTION_RECEIVE_WINDOW: u64 = 30 * 1024 * 1024;
-const MAXIMUM_INCOMING_STREAMS: u64 = 1 << 60;
+const STREAM_RECEIVE_WINDOW: u64 = 512 * 1024;
+const CONNECTION_RECEIVE_WINDOW: u64 = 2 * 1024 * 1024;
+// Tuned for high throughput with ultra-low memory (< 3MB)
+const MAXIMUM_INCOMING_STREAMS: u64 = 256;
 pub(crate) struct Inner {
     pub(crate) connection: quiche::Connection,
     pub(crate) read_wakers: HashMap<u64, Waker>,
