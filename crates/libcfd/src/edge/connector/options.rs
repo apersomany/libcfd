@@ -48,6 +48,8 @@ pub struct EdgeOptions {
     /// Called with each configuration the edge pushes for a
     /// remotely-managed tunnel (e.g. the hostnames routed to it).
     pub on_remote_configuration: Option<Arc<dyn Fn(RemoteConfiguration) + Send + Sync>>,
+    /// Called when the connection has successfully registered with the edge.
+    pub on_connected: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl std::fmt::Debug for EdgeOptions {
@@ -65,6 +67,10 @@ impl std::fmt::Debug for EdgeOptions {
                 "on_remote_configuration",
                 &self.on_remote_configuration.as_ref().map(|_| "<callback>"),
             )
+            .field(
+                "on_connected",
+                &self.on_connected.as_ref().map(|_| "<callback>"),
+            )
             .finish()
     }
 }
@@ -81,6 +87,7 @@ impl Default for EdgeOptions {
             grace_period: Duration::from_secs(30),
             maximum_quic_failures: 5,
             on_remote_configuration: None,
+            on_connected: None,
         }
     }
 }

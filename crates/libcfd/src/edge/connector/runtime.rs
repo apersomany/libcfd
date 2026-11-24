@@ -56,6 +56,7 @@ pub(crate) struct EdgeRunParameters {
     pub attempt: u32,
     pub on_remote_configuration:
         Option<Arc<dyn Fn(crate::edge::RemoteConfiguration) + Send + Sync>>,
+    pub on_connected: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// A transport-agnostic edge connection.
@@ -92,6 +93,7 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
         grace_period,
         attempt,
         on_remote_configuration,
+        on_connected,
     } = parameters;
     // cloudflared sends the edge address as the QUIC `originLocalIp`.
     let registration_options = RegistrationOptions {
@@ -122,6 +124,9 @@ async fn run_quic(connection: Box<QuicConnection>, parameters: EdgeRunParameters
         "registered with the edge"
     );
     let registered_at = Some(std::time::Instant::now());
+    if let Some(ref cb) = on_connected {
+        cb();
+    }
 
     let connection = Arc::new(*connection);
     let configuration_handler = Arc::new(EdgeConfigurationHandler::new(on_remote_configuration));
@@ -182,6 +187,7 @@ async fn run_h2(connection: Box<H2EdgeConnection>, parameters: EdgeRunParameters
         grace_period,
         attempt,
         on_remote_configuration,
+        on_connected,
         ..
     } = parameters;
     let registration_options = RegistrationOptions {
@@ -209,6 +215,9 @@ async fn run_h2(connection: Box<H2EdgeConnection>, parameters: EdgeRunParameters
         biased;
         _ = registered_wait.notified() => {
             registered_at = Some(std::time::Instant::now());
+            if let Some(ref cb) = on_connected {
+                cb();
+            }
             serving.await
         }
         result = &mut serving => result,

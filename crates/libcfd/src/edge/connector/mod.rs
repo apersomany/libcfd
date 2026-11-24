@@ -129,6 +129,7 @@ impl EdgeConnector {
                             grace_period: self.options.grace_period,
                             attempt,
                             on_remote_configuration: self.options.on_remote_configuration.clone(),
+                            on_connected: self.options.on_connected.clone(),
                         });
                         tokio::pin!(run);
                         tokio::select! {
