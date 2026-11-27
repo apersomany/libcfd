@@ -2,6 +2,7 @@
 name = "libcfd"
 version = "0.3.0"
 edition = "2024"
+license = "Apache-2.0"
 
 [features]
 default = ["quick-tunnel", "named-tunnel", "quic-edge", "h2-edge"]
