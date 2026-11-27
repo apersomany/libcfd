@@ -151,3 +151,29 @@ fn default_transport_matches_enabled_features() {
     #[cfg(all(not(quic_any), feature = "h2-edge"))]
     assert_eq!(options.transport, libcfd::Transport::H2);
 }
+
+/// `EdgeOptions` accepts an `on_connected` callback and formats cleanly in `Debug`.
+#[cfg(edge_conn)]
+#[test]
+fn edge_options_supports_on_connected_callback() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let flag = Arc::new(AtomicBool::new(false));
+    let flag_clone = flag.clone();
+
+    let mut options = libcfd::EdgeOptions::default();
+    assert!(options.on_connected.is_none());
+
+    options.on_connected = Some(Arc::new(move || {
+        flag_clone.store(true, Ordering::SeqCst);
+    }));
+
+    let debug_output = format!("{options:?}");
+    assert!(debug_output.contains("on_connected: Some(\"<callback>\")"));
+
+    if let Some(ref cb) = options.on_connected {
+        cb();
+    }
+    assert!(flag.load(Ordering::SeqCst));
+}

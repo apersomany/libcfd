@@ -24,7 +24,10 @@ pub(crate) struct EdgeAddress {
 
 /// Resolves the edge addresses for a connection, preferring the regional SRV
 /// records used by cloudflared and falling back to well-known hostnames.
-pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddress>> {
+pub(crate) async fn discover_edges(
+    region: Option<&str>,
+    ip_version: Option<&str>,
+) -> Result<Vec<EdgeAddress>> {
     let service = match region {
         Some(r) if !r.is_empty() => format!("{r}-{SRV_SERVICE}"),
         _ => SRV_SERVICE.to_string(),
@@ -33,7 +36,7 @@ pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddre
     match srv_lookup(&service, SRV_PROTO, SRV_NAME).await {
         Ok(records) if !records.is_empty() => {
             for (host, port) in records {
-                for ip in resolve_host(&host).await {
+                for ip in resolve_host(&host, ip_version).await {
                     let address = EdgeAddress {
                         address: SocketAddr::new(ip, port),
                     };
@@ -46,7 +49,7 @@ pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddre
         _ => {
             tracing::debug!("SRV lookup unavailable, using fallback edge hostnames");
             for host in FALLBACK_EDGES {
-                for ip in resolve_host(host).await {
+                for ip in resolve_host(host, ip_version).await {
                     let address = EdgeAddress {
                         address: SocketAddr::new(ip, FALLBACK_EDGE_PORT),
                     };
@@ -63,12 +66,17 @@ pub(crate) async fn discover_edges(region: Option<&str>) -> Result<Vec<EdgeAddre
     Ok(edges)
 }
 
-async fn resolve_host(host: &str) -> Vec<IpAddr> {
+async fn resolve_host(host: &str, ip_version: Option<&str>) -> Vec<IpAddr> {
     let mut out = Vec::new();
     if let Ok(addrs) = tokio::net::lookup_host((host, FALLBACK_EDGE_PORT)).await {
         for address in addrs {
             let ip = address.ip();
-            if !out.contains(&ip) {
+            let matches_version = match ip_version {
+                Some("4") | Some("v4") => ip.is_ipv4(),
+                Some("6") | Some("v6") => ip.is_ipv6(),
+                _ => true,
+            };
+            if matches_version && !out.contains(&ip) {
                 out.push(ip);
             }
         }
@@ -89,20 +97,103 @@ async fn srv_lookup(service: &str, proto: &str, name: &str) -> io::Result<Vec<(S
     Ok(Vec::new())
 }
 
-async fn resolver_address() -> Vec<SocketAddr> {
-    let mut candidates = Vec::new();
-    if let Ok(contents) = tokio::fs::read_to_string("/etc/resolv.conf").await {
-        for line in contents.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("nameserver") {
-                let host = rest.trim();
-                if let Ok(ip) = host.parse::<IpAddr>() {
-                    candidates.push(SocketAddr::new(ip, 53));
-                }
+fn parse_resolv_conf(contents: &str) -> Vec<SocketAddr> {
+    let mut out = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("nameserver") {
+            let host = rest.trim();
+            if let Ok(ip) = host.parse::<IpAddr>() {
+                out.push(SocketAddr::new(ip, 53));
             }
         }
     }
-    candidates.push(SocketAddr::from(([1, 1, 1, 1], 53)));
+    out
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_scutil_dns(contents: &str) -> Vec<SocketAddr> {
+    let mut out = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with("nameserver[")
+            && let Some((_, rhs)) = line.split_once(':')
+            && let Ok(ip) = rhs.trim().parse::<IpAddr>()
+            && !out.contains(&SocketAddr::new(ip, 53))
+        {
+            out.push(SocketAddr::new(ip, 53));
+        }
+    }
+    out
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn parse_netsh_dns(contents: &str) -> Vec<SocketAddr> {
+    let mut out = Vec::new();
+    for token in contents.split_whitespace() {
+        if let Ok(ip) = token.parse::<IpAddr>() {
+            if ip.is_unspecified() {
+                continue;
+            }
+            // Skip Windows site-local IPv6 DNS placeholder addresses (fec0::/10).
+            if let IpAddr::V6(v6) = ip
+                && (v6.segments()[0] & 0xffc0) == 0xfec0
+            {
+                continue;
+            }
+            let addr = SocketAddr::new(ip, 53);
+            if !out.contains(&addr) {
+                out.push(addr);
+            }
+        }
+    }
+    out
+}
+
+async fn resolver_address() -> Vec<SocketAddr> {
+    let mut candidates = Vec::new();
+    if let Ok(contents) = tokio::fs::read_to_string("/etc/resolv.conf").await {
+        candidates.extend(parse_resolv_conf(&contents));
+    }
+    #[cfg(target_os = "macos")]
+    if candidates.is_empty()
+        && let Ok(Ok(output)) = tokio::task::spawn_blocking(|| {
+            std::process::Command::new("scutil").arg("--dns").output()
+        })
+        .await
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        candidates.extend(parse_scutil_dns(&stdout));
+    }
+    #[cfg(target_os = "windows")]
+    if candidates.is_empty()
+        && let Ok(addrs) = tokio::task::spawn_blocking(|| {
+            let mut found = Vec::new();
+            for family in ["ip", "ipv6"] {
+                if let Ok(output) = std::process::Command::new("netsh")
+                    .args(["interface", family, "show", "dnsservers"])
+                    .output()
+                    && output.status.success()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    for addr in parse_netsh_dns(&stdout) {
+                        if !found.contains(&addr) {
+                            found.push(addr);
+                        }
+                    }
+                }
+            }
+            found
+        })
+        .await
+    {
+        candidates.extend(addrs);
+    }
+    let fallback = SocketAddr::from(([1, 1, 1, 1], 53));
+    if !candidates.contains(&fallback) {
+        candidates.push(fallback);
+    }
     candidates
 }
 
@@ -158,6 +249,17 @@ fn parse_srv_response(bytes: &[u8], identifier: u16) -> io::Result<Vec<(String, 
             "dns id mismatch",
         ));
     }
+    let flags = u16::from_be_bytes([bytes[2], bytes[3]]);
+    let rcode = flags & 0x000f;
+    if rcode != 0 {
+        return Err(io::Error::other(format!(
+            "dns server returned rcode {rcode}"
+        )));
+    }
+    if (flags & 0x0200) != 0 {
+        tracing::debug!("dns srv response was truncated");
+    }
+
     let answer_count = u16::from_be_bytes([bytes[6], bytes[7]]) as usize;
     let mut position = 12usize;
     // Skip the question section.
@@ -228,7 +330,14 @@ fn skip_name(bytes: &[u8], mut position: usize) -> io::Result<usize> {
 fn decode_name(bytes: &[u8], position: &mut usize, out: &mut String) -> io::Result<()> {
     let mut p = *position;
     let mut jumped = false;
+    let mut jumps = 0;
     loop {
+        if jumps > 16 || out.len() > 255 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "compression loop or name too long",
+            ));
+        }
         if p >= bytes.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "name overflow"));
         }
@@ -249,6 +358,7 @@ fn decode_name(bytes: &[u8], position: &mut usize, out: &mut String) -> io::Resu
             }
             p = target;
             jumped = true;
+            jumps += 1;
             continue;
         }
         if length & 0xc0 != 0 {
@@ -372,5 +482,54 @@ mod tests {
         // A label length that runs past the end of the message.
         let bytes = [0x12, 0x34, 0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0, 0x20, b'x'];
         assert!(parse_srv_response(&bytes, 0x1234).is_err());
+    }
+
+    #[test]
+    fn rejects_cyclic_dns_compression_pointers() {
+        // Construct a circular compression pointer pointing back to itself (offset 12 -> offset 12)
+        let bytes = [
+            0x12, 0x34, 0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0, 0xc0,
+            0x0c, // Pointer at 12 pointing to 12
+        ];
+        let mut pos = 12;
+        let mut out = String::new();
+        let result = decode_name(&bytes, &mut pos, &mut out);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("compression loop"));
+    }
+
+    #[test]
+    fn rejects_dns_error_rcode() {
+        // rcode 3 (NXDOMAIN) in flags [0x81, 0x83]
+        let bytes = [0x12, 0x34, 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0];
+        let err = parse_srv_response(&bytes, 0x1234).unwrap_err();
+        assert!(err.to_string().contains("rcode 3"));
+    }
+
+    #[test]
+    fn parses_platform_dns_outputs() {
+        let resolv = "nameserver 10.0.0.1\nnameserver 2001:4860:4860::8888\n";
+        assert_eq!(
+            parse_resolv_conf(resolv),
+            vec![
+                "10.0.0.1:53".parse().unwrap(),
+                "[2001:4860:4860::8888]:53".parse().unwrap(),
+            ]
+        );
+
+        let scutil = "resolver #1\n  nameserver[0] : 192.168.1.1\n  nameserver[1] : 192.168.1.1\n";
+        assert_eq!(
+            parse_scutil_dns(scutil),
+            vec!["192.168.1.1:53".parse().unwrap()]
+        );
+
+        let netsh = "Configuration for interface \"Ethernet\"\n    DNS servers configured through DHCP:  192.168.1.254\n                                          8.8.8.8\n    fec0:0:0:ffff::1\n";
+        assert_eq!(
+            parse_netsh_dns(netsh),
+            vec![
+                "192.168.1.254:53".parse().unwrap(),
+                "8.8.8.8:53".parse().unwrap(),
+            ]
+        );
     }
 }

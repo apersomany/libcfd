@@ -22,7 +22,7 @@ named-tunnel = ["dep:serde", "dep:serde_json", "dep:uuid"]
 # enable `quic-edge-quiche` to use quiche (BoringSSL via `boring`) instead.
 # The backends are mutually exclusive: quiche wins when both are enabled.
 quic-edge = ["quic-edge-quinn"]
-quic-edge-quinn = ["dep:quinn", "dep:rustls", "dep:rustls-pki-types"]
+quic-edge-quinn = ["dep:quinn", "dep:rustls", "dep:rustls-pki-types", "dep:webpki-roots"]
 quic-edge-quiche = ["dep:quiche", "dep:boring"]
 # HTTP/2 edge transport.
 h2-edge = [
@@ -31,6 +31,7 @@ h2-edge = [
     "dep:rustls",
     "dep:tokio-rustls",
     "dep:rustls-pki-types",
+    "dep:webpki-roots",
     "dep:serde_json",
 ]
 # Adapter letting an axum Router serve as an HttpOrigin (HTTP only; see docs).

@@ -25,10 +25,10 @@ use super::{EDGE_ALPN, EDGE_SNI};
 const MAXIMUM_DATAGRAM_SIZE: u16 = 1350;
 const MAXIMUM_IDLE_TIMEOUT_MS: u32 = 5_000;
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
-const STREAM_RECEIVE_WINDOW: u64 = 6 * 1024 * 1024;
-const CONNECTION_RECEIVE_WINDOW: u64 = 30 * 1024 * 1024;
-// Quinn allocates state for the entire advertised receive window.
-const MAXIMUM_INCOMING_STREAMS: u64 = 1024;
+const STREAM_RECEIVE_WINDOW: u64 = 512 * 1024;
+const CONNECTION_RECEIVE_WINDOW: u64 = 2 * 1024 * 1024;
+// Tuned for high throughput with ultra-low memory (< 3MB)
+const MAXIMUM_INCOMING_STREAMS: u64 = 256;
 
 /// A QUIC connection to the edge.
 pub(crate) struct QuicConnection {

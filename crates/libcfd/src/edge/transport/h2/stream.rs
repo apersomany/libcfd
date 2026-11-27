@@ -19,7 +19,7 @@ use h2::RecvStream;
 /// Releases flow-control capacity as chunks are consumed so the edge can
 /// keep sending.
 pub(crate) struct ReceiveStreamReader {
-    receive: RecvStream,
+    receive: Option<RecvStream>,
     chunk: Option<Bytes>,
     position: usize,
     eof: bool,
@@ -28,7 +28,7 @@ pub(crate) struct ReceiveStreamReader {
 impl ReceiveStreamReader {
     pub(crate) fn new(receive: RecvStream) -> Self {
         Self {
-            receive,
+            receive: Some(receive),
             chunk: None,
             position: 0,
             eof: false,
@@ -55,7 +55,9 @@ impl AsyncRead for ReceiveStreamReader {
                         self.chunk = Some(chunk);
                     } else {
                         let used = chunk.len();
-                        if let Err(e) = self.receive.flow_control().release_capacity(used) {
+                        if let Some(receive) = self.receive.as_mut()
+                            && let Err(e) = receive.flow_control().release_capacity(used)
+                        {
                             return Poll::Ready(Err(io::Error::other(e)));
                         }
                         self.chunk = None;
@@ -65,7 +67,11 @@ impl AsyncRead for ReceiveStreamReader {
                 }
                 self.position = 0;
             }
-            match Pin::new(&mut self.receive).poll_data(cx) {
+            let Some(receive) = self.receive.as_mut() else {
+                self.eof = true;
+                return Poll::Ready(Ok(0));
+            };
+            match Pin::new(receive).poll_data(cx) {
                 Poll::Ready(Some(Ok(chunk))) => {
                     self.chunk = Some(chunk);
                 }
@@ -78,6 +84,40 @@ impl AsyncRead for ReceiveStreamReader {
                 }
                 Poll::Pending => return Poll::Pending,
             }
+        }
+    }
+}
+
+impl Drop for ReceiveStreamReader {
+    fn drop(&mut self) {
+        if let Some(chunk) = self.chunk.take()
+            && let Some(receive) = self.receive.as_mut()
+        {
+            let _ = receive.flow_control().release_capacity(chunk.len());
+        }
+        if !self.eof
+            && let Some(mut receive) = self.receive.take()
+            && tokio::runtime::Handle::try_current().is_ok()
+        {
+            tokio::spawn(async move {
+                let mut drained = 0;
+                const MAX_DRAIN: usize = 512 * 1024;
+                while drained < MAX_DRAIN {
+                    let step = tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        std::future::poll_fn(|cx| Pin::new(&mut receive).poll_data(cx)),
+                    )
+                    .await;
+                    match step {
+                        Ok(Some(Ok(chunk))) => {
+                            let len = chunk.len();
+                            drained += len;
+                            let _ = receive.flow_control().release_capacity(len);
+                        }
+                        _ => break,
+                    }
+                }
+            });
         }
     }
 }

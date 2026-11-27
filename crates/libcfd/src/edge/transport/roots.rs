@@ -15,16 +15,19 @@ const SYSTEM_CA_PATHS: &[&str] = &[
 /// roots, and any user-supplied CA, in that order.
 pub(crate) fn root_pems(ca_cert_pem: Option<&[u8]>) -> Vec<Vec<u8>> {
     let mut pems = Vec::new();
-    let mut found_system = false;
-    for path in SYSTEM_CA_PATHS {
-        if let Ok(bytes) = std::fs::read(path) {
-            pems.push(bytes);
-            found_system = true;
-            break;
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut found_system = false;
+        for path in SYSTEM_CA_PATHS {
+            if let Ok(bytes) = std::fs::read(path) {
+                pems.push(bytes);
+                found_system = true;
+                break;
+            }
         }
-    }
-    if !found_system {
-        tracing::warn!("no system CA bundle found; using bundled roots only");
+        if !found_system {
+            tracing::warn!("no system CA bundle found; using bundled roots only");
+        }
     }
     pems.push(include_bytes!("quic/cloudflare_origin_ca.pem").to_vec());
     if let Some(custom) = ca_cert_pem {

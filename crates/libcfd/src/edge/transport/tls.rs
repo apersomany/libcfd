@@ -12,6 +12,15 @@ pub(crate) fn tls_client_config(ca_cert_pem: Option<&[u8]>) -> Result<rustls::Cl
             let _ = store.add(cert);
         }
     }
+    // On systems without /etc/ssl/certs (e.g. macOS, Windows), ensure web PKI roots are available
+    #[cfg(any(
+        feature = "quick-tunnel",
+        feature = "quic-edge-quinn",
+        feature = "h2-edge"
+    ))]
+    {
+        store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
     Ok(rustls::ClientConfig::builder()
         .with_root_certificates(store)
         .with_no_client_auth())

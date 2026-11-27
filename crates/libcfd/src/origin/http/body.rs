@@ -17,8 +17,8 @@ pub struct Request {
     /// The request body, streamed incrementally from the edge as it
     /// arrives. Nothing is pre-buffered: readers pull bytes as the edge
     /// sends them, and a handler may respond before the body is fully
-    /// consumed. QUIC attempts a bounded drain of unread bytes after sending
-    /// the response; HTTP/2 does not explicitly drain the request body.
+    /// consumed. Both QUIC and HTTP/2 attempt a bounded drain of unread bytes after sending
+    /// the response to release flow-control credit.
     pub body: Body,
 }
 
